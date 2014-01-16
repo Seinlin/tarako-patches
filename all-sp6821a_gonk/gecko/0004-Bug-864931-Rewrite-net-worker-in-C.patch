@@ -1,4 +1,4 @@
-From d2ded87481c9c4f27ec374ed8b872cb9a7260200 Mon Sep 17 00:00:00 2001
+From a05ad8a2e28bd73ef286723c310dd82f1c07a50e Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:07:16 +0800
 Subject: [PATCH 04/11] Bug 864931 - Rewrite net worker in C++.

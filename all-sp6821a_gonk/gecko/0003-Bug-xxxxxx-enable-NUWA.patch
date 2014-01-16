@@ -1,4 +1,4 @@
-From 4e617e869292760179023db690c5ce614c0d5eb3 Mon Sep 17 00:00:00 2001
+From 36f8e3ce71a15de81a12023e48d60f3255b2606a Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:03:24 +0800
 Subject: [PATCH 03/11] Bug xxxxxx - enable NUWA.

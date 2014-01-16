@@ -1,4 +1,4 @@
-From 8209b8359a9082863c27bcb406a4dbed004ed222 Mon Sep 17 00:00:00 2001
+From 6b19b73a77d0117b856cf72e1f1410e9405e8cd9 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Mon, 13 Jan 2014 00:11:30 +0800
 Subject: [PATCH 10/11] Bug 897745 - Implement the CSP cache using ES6 Map.

@@ -1,4 +1,4 @@
-From bab08f44f3d07093a55fd658ba84a872adb4f589 Mon Sep 17 00:00:00 2001
+From 206f5aad6f85a2807c9962782c6230965dee8eb9 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 14:23:59 +0800
 Subject: [PATCH 07/11] Bug 957241 - Don't package the full sdk when we don't

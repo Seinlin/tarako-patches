@@ -1,4 +1,4 @@
-From 66a9818ec439e3b5d39ee5bb6859771f0ebfc3e5 Mon Sep 17 00:00:00 2001
+From 099c9ffb71e0fd7cd38f05bc43c26dfab96b8bb3 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 14:14:18 +0800
 Subject: [PATCH 06/11] Bug 956982 - Clean up omni.ja content.

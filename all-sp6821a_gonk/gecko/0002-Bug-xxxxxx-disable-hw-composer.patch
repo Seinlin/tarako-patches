@@ -1,4 +1,4 @@
-From 53004e6b6154bce9c51124ff143be51cc22c45c9 Mon Sep 17 00:00:00 2001
+From eb072ffd28a9f8deac5a82204bf744bf054f2b4e Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:02:49 +0800
 Subject: [PATCH 02/11] Bug xxxxxx - disable hw composer.
@@ -8,7 +8,7 @@ Subject: [PATCH 02/11] Bug xxxxxx - disable hw composer.
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/b2g/app/b2g.js b/b2g/app/b2g.js
-index 7f5d481..b7175fe 100644
+index 87e18b3..6a07df5 100644
 --- a/b2g/app/b2g.js
 +++ b/b2g/app/b2g.js
 @@ -268,7 +268,7 @@ pref("layers.offmainthreadcomposition.async-animations", true);

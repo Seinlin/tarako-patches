@@ -1,4 +1,4 @@
-From 55a8d34b5560a552a1e313d5e5178c70815dbed3 Mon Sep 17 00:00:00 2001
+From 3de43d5d3e24e2face1cfbd28f6730f3bf81030a Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 23:44:27 +0800
 Subject: [PATCH 08/11] Bug 957509 - Reduce USS of Nuwa and preallocated
@@ -116,7 +116,7 @@ index 5e9bc6b..1010eb3 100644
              FROM_HERE, NewRunnableFunction(OnFinishNuwaPreparation));
      }
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index a5fc0bb..ad4a315 100644
+index 7f3627c..50c0b72 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
 @@ -796,7 +796,7 @@ ContentParent::MaybeTakeCPUWakeLock(Element* aFrameElement)
@@ -128,7 +128,7 @@ index a5fc0bb..ad4a315 100644
  
      // Now that we've set this process's priority, check whether the process is
      // still alive.  Hopefully we've set the priority to FOREGROUND*, so the
-@@ -1279,7 +1279,8 @@ ContentParent::ContentParent(mozIApplication* aApp,
+@@ -1283,7 +1283,8 @@ ContentParent::ContentParent(mozIApplication* aApp,
  
      InitInternal(aInitialPriority,
                   true, /* Setup off-main thread compositing */
@@ -138,7 +138,7 @@ index a5fc0bb..ad4a315 100644
  }
  
  #ifdef MOZ_NUWA_PROCESS
-@@ -1351,7 +1352,8 @@ ContentParent::ContentParent(ContentParent* aTemplate,
+@@ -1356,7 +1357,8 @@ ContentParent::ContentParent(ContentParent* aTemplate,
  
      InitInternal(priority,
                   false, /* Setup Off-main thread compositing */
@@ -148,7 +148,7 @@ index a5fc0bb..ad4a315 100644
  }
  #endif  // MOZ_NUWA_PROCESS
  
-@@ -1384,7 +1386,8 @@ ContentParent::~ContentParent()
+@@ -1389,7 +1391,8 @@ ContentParent::~ContentParent()
  void
  ContentParent::InitInternal(ProcessPriority aInitialPriority,
                              bool aSetupOffMainThreadCompositing,
@@ -158,7 +158,7 @@ index a5fc0bb..ad4a315 100644
  {
      // Set the subprocess's priority.  We do this early on because we're likely
      // /lowering/ the process's CPU and memory priority, which it has inherited
-@@ -1392,7 +1395,9 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+@@ -1397,7 +1400,9 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
      //
      // This call can cause us to send IPC messages to the child process, so it
      // must come after the Open() call above.
@@ -169,7 +169,7 @@ index a5fc0bb..ad4a315 100644
  
      if (aSetupOffMainThreadCompositing) {
          // NB: internally, this will send an IPC message to the child
-@@ -1424,7 +1429,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+@@ -1429,7 +1434,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
  
      mMessageManager = nsFrameMessageManager::NewProcessMessageManager(this);
  
@@ -178,7 +178,7 @@ index a5fc0bb..ad4a315 100644
          nsCString version(gAppData->version);
          nsCString buildID(gAppData->buildID);
          nsCString name(gAppData->name);
-@@ -1435,7 +1440,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+@@ -1440,7 +1445,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
      }
  
      nsStyleSheetService *sheetService = nsStyleSheetService::GetInstance();
@@ -188,10 +188,10 @@ index a5fc0bb..ad4a315 100644
          // send two loads.
  
 diff --git a/dom/ipc/ContentParent.h b/dom/ipc/ContentParent.h
-index 693e2c7..f38defc 100644
+index 660dde1..5a1ff82 100644
 --- a/dom/ipc/ContentParent.h
 +++ b/dom/ipc/ContentParent.h
-@@ -268,10 +268,11 @@ private:
+@@ -271,10 +271,11 @@ private:
      // The common initialization for the constructors.
      void InitializeMembers();
  
@@ -341,7 +341,7 @@ index 50ecdaa..88e245d 100644
    /**
     * Returns true iff this process's priority is FOREGROUND*.
 diff --git a/dom/ipc/TabChild.cpp b/dom/ipc/TabChild.cpp
-index 3702a27..8c7665d 100644
+index 30bd89a..321c6e3 100644
 --- a/dom/ipc/TabChild.cpp
 +++ b/dom/ipc/TabChild.cpp
 @@ -243,6 +243,21 @@ TabChild::PreloadSlowThings()

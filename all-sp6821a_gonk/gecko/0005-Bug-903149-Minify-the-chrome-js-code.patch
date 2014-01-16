@@ -1,4 +1,4 @@
-From f974efac4b99bd21f1aa1fd71ad937ca4aa19d0e Mon Sep 17 00:00:00 2001
+From 617c19615c4aa3f248a257f167f00810bece5aa6 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 12:33:29 +0800
 Subject: [PATCH 05/11] Bug 903149 - Minify the chrome js code.

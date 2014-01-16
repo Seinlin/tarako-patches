@@ -1,4 +1,4 @@
-From 4d811b16b757b81ffada4517dc051e92f5064212 Mon Sep 17 00:00:00 2001
+From 1763511dc2e921ddda3bb95b800fd4d2b775ae52 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Mon, 13 Jan 2014 00:06:57 +0800
 Subject: [PATCH 09/11] Bug 948276 - Lazy load accessibility support.
@@ -25,7 +25,7 @@ index d91c581..e7b7276 100644
 +  }
 +});
 diff --git a/b2g/chrome/content/shell.js b/b2g/chrome/content/shell.js
-index 4152bba..7976204 100644
+index b3427d6..4047fc8 100644
 --- a/b2g/chrome/content/shell.js
 +++ b/b2g/chrome/content/shell.js
 @@ -12,7 +12,6 @@ Cu.import('resource://gre/modules/ActivitiesService.jsm');

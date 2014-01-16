@@ -1,4 +1,4 @@
-From 2e573ff026af610a0ee81bf28f59db73b07be25e Mon Sep 17 00:00:00 2001
+From a34099d9fa1027ef03da125db08d8d148f00ffc4 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Tue, 14 Jan 2014 12:06:10 +0800
 Subject: [PATCH 11/11] Set NUWA to higher priority.
