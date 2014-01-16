@@ -1,0 +1,35 @@
+From 7028ce77d6e96d2b47af22f0472c788d9b3cd908 Mon Sep 17 00:00:00 2001
+From: Kai-Zhen Li <kli@mozilla.com>
+Date: Thu, 16 Jan 2014 18:09:36 +0800
+Subject: [PATCH] Set zram swappiness to 100.
+
+---
+ sp6821a_gonk/BoardConfig.mk |    1 +
+ sp6821a_gonk/init.sp8810.rc |    2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/sp6821a_gonk/BoardConfig.mk b/sp6821a_gonk/BoardConfig.mk
+index a838445..4a22d20 100644
+--- a/sp6821a_gonk/BoardConfig.mk
++++ b/sp6821a_gonk/BoardConfig.mk
+@@ -90,3 +90,4 @@ USE_ENG_UART_USB_AUTO := true
+ 
+ SP6821A_FFOS_DEBUG := true
+ 
++export OVERRIDE_B2G_PREF := $(PWD)/device/sprd/sp6821a_gonk
+diff --git a/sp6821a_gonk/init.sp8810.rc b/sp6821a_gonk/init.sp8810.rc
+index 2054400..25cdb0b 100755
+--- a/sp6821a_gonk/init.sp8810.rc
++++ b/sp6821a_gonk/init.sp8810.rc
+@@ -66,7 +66,7 @@ on property:ro.debuggable=1
+ 
+ on property:zram.support=true
+     setprop zram.disksize 64
+-    setprop sys.vm.swappiness 60
++    setprop sys.vm.swappiness 100
+     start zram
+ 
+ service zram /system/xbin/zram.sh
+-- 
+1.7.9.5
+
