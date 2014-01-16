@@ -1,0 +1,24 @@
+From 4e617e869292760179023db690c5ce614c0d5eb3 Mon Sep 17 00:00:00 2001
+From: Kaizhen <kli@mozilla.com>
+Date: Sat, 11 Jan 2014 17:03:24 +0800
+Subject: [PATCH 03/11] Bug xxxxxx - enable NUWA.
+
+---
+ b2g/confvars.sh |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/b2g/confvars.sh b/b2g/confvars.sh
+index b45f25f..26aba1a 100644
+--- a/b2g/confvars.sh
++++ b/b2g/confvars.sh
+@@ -57,6 +57,6 @@ MOZ_PLACES=
+ MOZ_B2G=1
+ 
+ if test "$OS_TARGET" = "Android"; then
+-MOZ_NUWA_PROCESS=
++MOZ_NUWA_PROCESS=1
+ fi
+ MOZ_FOLD_LIBS=1
+-- 
+1.7.9.5
+

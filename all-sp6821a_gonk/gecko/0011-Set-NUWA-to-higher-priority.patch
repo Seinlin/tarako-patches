@@ -1,0 +1,25 @@
+From 2e573ff026af610a0ee81bf28f59db73b07be25e Mon Sep 17 00:00:00 2001
+From: Kaizhen <kli@mozilla.com>
+Date: Tue, 14 Jan 2014 12:06:10 +0800
+Subject: [PATCH 11/11] Set NUWA to higher priority.
+
+---
+ dom/ipc/PreallocatedProcessManager.cpp |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dom/ipc/PreallocatedProcessManager.cpp b/dom/ipc/PreallocatedProcessManager.cpp
+index 66613ed..b34045f 100644
+--- a/dom/ipc/PreallocatedProcessManager.cpp
++++ b/dom/ipc/PreallocatedProcessManager.cpp
+@@ -354,7 +354,7 @@ PreallocatedProcessManagerImpl::OnNuwaReady()
+ {
+   NS_ASSERTION(!mIsNuwaReady, "Multiple Nuwa processes created!");
+   ProcessPriorityManager::SetProcessPriority(mPreallocatedAppProcess,
+-                                             hal::PROCESS_PRIORITY_FOREGROUND,
++                                             hal::PROCESS_PRIORITY_MASTER,
+                                              true);
+   mIsNuwaReady = true;
+   if (Preferences::GetBool("dom.ipc.processPriorityManager.testMode")) {
+-- 
+1.7.9.5
+

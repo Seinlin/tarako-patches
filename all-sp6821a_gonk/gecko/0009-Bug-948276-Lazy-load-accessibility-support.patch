@@ -1,0 +1,49 @@
+From 4d811b16b757b81ffada4517dc051e92f5064212 Mon Sep 17 00:00:00 2001
+From: Kaizhen <kli@mozilla.com>
+Date: Mon, 13 Jan 2014 00:06:57 +0800
+Subject: [PATCH 09/11] Bug 948276 - Lazy load accessibility support.
+
+---
+ b2g/chrome/content/settings.js |    8 ++++++++
+ b2g/chrome/content/shell.js    |    2 --
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/b2g/chrome/content/settings.js b/b2g/chrome/content/settings.js
+index d91c581..e7b7276 100644
+--- a/b2g/chrome/content/settings.js
++++ b/b2g/chrome/content/settings.js
+@@ -476,3 +476,11 @@ SettingsListener.observe("layers.draw-borders", false, function(value) {
+ SettingsListener.observe("layers.composer2d.enabled", true, function(value) {
+   Services.prefs.setBoolPref("layers.composer2d.enabled", value);
+ });
++
++// ================ Accessibility ============
++SettingsListener.observe("accessibility.screenreader", false, function(value) {
++  if (value) {
++    Cu.import('resource://gre/modules/accessibility/AccessFu.jsm');
++    AccessFu.attach(window);
++  }
++});
+diff --git a/b2g/chrome/content/shell.js b/b2g/chrome/content/shell.js
+index 4152bba..7976204 100644
+--- a/b2g/chrome/content/shell.js
++++ b/b2g/chrome/content/shell.js
+@@ -12,7 +12,6 @@ Cu.import('resource://gre/modules/ActivitiesService.jsm');
+ Cu.import('resource://gre/modules/PermissionPromptHelper.jsm');
+ Cu.import('resource://gre/modules/ObjectWrapper.jsm');
+ Cu.import('resource://gre/modules/NotificationDB.jsm');
+-Cu.import('resource://gre/modules/accessibility/AccessFu.jsm');
+ Cu.import('resource://gre/modules/Payment.jsm');
+ Cu.import("resource://gre/modules/AppsUtils.jsm");
+ Cu.import('resource://gre/modules/UserAgentOverrides.jsm');
+@@ -308,7 +307,6 @@ var shell = {
+ 
+     CustomEventManager.init();
+     WebappsHelper.init();
+-    AccessFu.attach(window);
+     UserAgentOverrides.init();
+     IndexedDBPromptHelper.init();
+     CaptivePortalLoginHelper.init();
+-- 
+1.7.9.5
+

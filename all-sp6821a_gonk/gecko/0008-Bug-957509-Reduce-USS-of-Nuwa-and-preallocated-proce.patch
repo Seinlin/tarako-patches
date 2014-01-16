@@ -1,0 +1,450 @@
+From 55a8d34b5560a552a1e313d5e5178c70815dbed3 Mon Sep 17 00:00:00 2001
+From: Kaizhen <kli@mozilla.com>
+Date: Sun, 12 Jan 2014 23:44:27 +0800
+Subject: [PATCH 08/11] Bug 957509 - Reduce USS of Nuwa and preallocated
+ process.
+
+---
+ dom/browser-element/BrowserElementChild.js        |    8 +++++++
+ dom/browser-element/BrowserElementChildPreload.js |    7 -------
+ dom/ipc/ContentChild.cpp                          |   20 ++++++++++++++----
+ dom/ipc/ContentParent.cpp                         |   19 ++++++++++-------
+ dom/ipc/ContentParent.h                           |    5 +++--
+ dom/ipc/PreallocatedProcessManager.cpp            |    3 ++-
+ dom/ipc/ProcessPriorityManager.cpp                |   23 ++++++++++++++-------
+ dom/ipc/ProcessPriorityManager.h                  |    3 ++-
+ dom/ipc/TabChild.cpp                              |   15 ++++++++++++++
+ dom/ipc/TabChild.h                                |    1 +
+ dom/ipc/jar.mn                                    |    1 +
+ dom/ipc/preload.js                                |    6 ------
+ dom/ipc/preload2.js                               |   13 ++++++++++++
+ 13 files changed, 88 insertions(+), 36 deletions(-)
+ create mode 100644 dom/ipc/preload2.js
+
+diff --git a/dom/browser-element/BrowserElementChild.js b/dom/browser-element/BrowserElementChild.js
+index 661b6c9..aa16609 100644
+--- a/dom/browser-element/BrowserElementChild.js
++++ b/dom/browser-element/BrowserElementChild.js
+@@ -8,6 +8,7 @@ let { classes: Cc, interfaces: Ci, results: Cr, utils: Cu }  = Components;
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ Cu.import("resource://gre/modules/Services.jsm");
+ Cu.import("resource://gre/modules/Geometry.jsm");
++Cu.import("resource://gre/modules/BrowserElementPromptService.jsm");
+ 
+ function debug(msg) {
+   //dump("BrowserElementChild - " + msg + "\n");
+@@ -63,4 +64,11 @@ if (!('BrowserElementIsPreloaded' in this)) {
+   ContentPanning.init();
+ }
+ 
++BrowserElementPromptService.mapWindowToBrowserElementChild(content, this);
++
++// This is necessary to get security web progress notifications.
++var securityUI = Cc['@mozilla.org/secure_browser_ui;1']
++      .createInstance(Ci.nsISecureBrowserUI);
++securityUI.init(content);
++
+ var BrowserElementIsReady = true;
+diff --git a/dom/browser-element/BrowserElementChildPreload.js b/dom/browser-element/BrowserElementChildPreload.js
+index 084edb5..a8910bf 100644
+--- a/dom/browser-element/BrowserElementChildPreload.js
++++ b/dom/browser-element/BrowserElementChildPreload.js
+@@ -140,8 +140,6 @@ BrowserElementChild.prototype = {
+   _init: function() {
+     debug("Starting up.");
+ 
+-    BrowserElementPromptService.mapWindowToBrowserElementChild(content, this);
+-
+     docShell.QueryInterface(Ci.nsIWebProgress)
+             .addProgressListener(this._progressListener,
+                                  Ci.nsIWebProgress.NOTIFY_LOCATION |
+@@ -152,11 +150,6 @@ BrowserElementChild.prototype = {
+             .sessionHistory = Cc["@mozilla.org/browser/shistory;1"]
+                                 .createInstance(Ci.nsISHistory);
+ 
+-    // This is necessary to get security web progress notifications.
+-    var securityUI = Cc['@mozilla.org/secure_browser_ui;1']
+-                       .createInstance(Ci.nsISecureBrowserUI);
+-    securityUI.init(content);
+-
+     // A cache of the menuitem dom objects keyed by the id we generate
+     // and pass to the embedder
+     this._ctxHandlers = {};
+diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
+index 5e9bc6b..1010eb3 100644
+--- a/dom/ipc/ContentChild.cpp
++++ b/dom/ipc/ContentChild.cpp
+@@ -1350,6 +1350,12 @@ PreloadSlowThings()
+ 
+ }
+ 
++static void
++PreloadSlowThings2()
++{
++    TabChild::PreloadSlowThings2();
++}
++
+ bool
+ ContentChild::RecvAppInfo(const nsCString& version, const nsCString& buildID,
+                           const nsCString& name, const nsCString& UAName)
+@@ -1368,17 +1374,23 @@ ContentChild::RecvAppInfo(const nsCString& version, const nsCString& buildID,
+     // PreloadSlowThings() may set the docshell of the first TabChild
+     // inactive, and we can only safely restore it to active from
+     // BrowserElementChild.js.
+-    if ((mIsForApp || mIsForBrowser)
++    if (mIsForApp || mIsForBrowser) {
+ #ifdef MOZ_NUWA_PROCESS
+-        && !IsNuwaProcess()
++        if (IsNuwaProcess()) {
++            PreloadSlowThings();
++        } else {
++            PreloadSlowThings2();
++        }
++#else
++        // Calling PreloadSlowThings2 will make PreloadSlowThings called.
++        PreloadSlowThings2();
+ #endif
+-       ) {
+-        PreloadSlowThings();
+     }
+ 
+ #ifdef MOZ_NUWA_PROCESS
+     if (IsNuwaProcess()) {
+         ContentChild::GetSingleton()->RecvGarbageCollect();
++        nsJSContext::CycleCollectNow();
+         MessageLoop::current()->PostTask(
+             FROM_HERE, NewRunnableFunction(OnFinishNuwaPreparation));
+     }
+diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
+index a5fc0bb..ad4a315 100644
+--- a/dom/ipc/ContentParent.cpp
++++ b/dom/ipc/ContentParent.cpp
+@@ -796,7 +796,7 @@ ContentParent::MaybeTakeCPUWakeLock(Element* aFrameElement)
+ bool
+ ContentParent::SetPriorityAndCheckIsAlive(ProcessPriority aPriority)
+ {
+-    ProcessPriorityManager::SetProcessPriority(this, aPriority);
++    ProcessPriorityManager::SetProcessPriority(this, aPriority, true);
+ 
+     // Now that we've set this process's priority, check whether the process is
+     // still alive.  Hopefully we've set the priority to FOREGROUND*, so the
+@@ -1279,7 +1279,8 @@ ContentParent::ContentParent(mozIApplication* aApp,
+ 
+     InitInternal(aInitialPriority,
+                  true, /* Setup off-main thread compositing */
+-                 true  /* Send registered chrome */);
++                 true,  /* Send registered chrome */
++                 true  /* Minimize memory */ );
+ }
+ 
+ #ifdef MOZ_NUWA_PROCESS
+@@ -1351,7 +1352,8 @@ ContentParent::ContentParent(ContentParent* aTemplate,
+ 
+     InitInternal(priority,
+                  false, /* Setup Off-main thread compositing */
+-                 false  /* Send registered chrome */);
++                 false,  /* Send registered chrome */
++                 false /* Don't minimize memory */ );
+ }
+ #endif  // MOZ_NUWA_PROCESS
+ 
+@@ -1384,7 +1386,8 @@ ContentParent::~ContentParent()
+ void
+ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+                             bool aSetupOffMainThreadCompositing,
+-                            bool aSendRegisteredChrome)
++                            bool aSendRegisteredChrome,
++                            bool aMinimizeMemory)
+ {
+     // Set the subprocess's priority.  We do this early on because we're likely
+     // /lowering/ the process's CPU and memory priority, which it has inherited
+@@ -1392,7 +1395,9 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+     //
+     // This call can cause us to send IPC messages to the child process, so it
+     // must come after the Open() call above.
+-    ProcessPriorityManager::SetProcessPriority(this, aInitialPriority);
++    ProcessPriorityManager::SetProcessPriority(this,
++                                               aInitialPriority,
++                                               aMinimizeMemory);
+ 
+     if (aSetupOffMainThreadCompositing) {
+         // NB: internally, this will send an IPC message to the child
+@@ -1424,7 +1429,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+ 
+     mMessageManager = nsFrameMessageManager::NewProcessMessageManager(this);
+ 
+-    if (gAppData) {
++    if (gAppData && aSendRegisteredChrome) {
+         nsCString version(gAppData->version);
+         nsCString buildID(gAppData->buildID);
+         nsCString name(gAppData->name);
+@@ -1435,7 +1440,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+     }
+ 
+     nsStyleSheetService *sheetService = nsStyleSheetService::GetInstance();
+-    if (sheetService) {
++    if (sheetService && aSendRegisteredChrome) {
+         // This looks like a lot of work, but in a normal browser session we just
+         // send two loads.
+ 
+diff --git a/dom/ipc/ContentParent.h b/dom/ipc/ContentParent.h
+index 693e2c7..f38defc 100644
+--- a/dom/ipc/ContentParent.h
++++ b/dom/ipc/ContentParent.h
+@@ -268,10 +268,11 @@ private:
+     // The common initialization for the constructors.
+     void InitializeMembers();
+ 
+-    // The common initialization logic shared by all constuctors.
++    // The common initialization logic shared by both constuctors.
+     void InitInternal(ProcessPriority aPriority,
+                       bool aSetupOffMainThreadCompositing,
+-                      bool aSendRegisteredChrome);
++                      bool aSendRegisteredChrome,
++                      bool aMinimizeMemory);
+ 
+     virtual ~ContentParent();
+ 
+diff --git a/dom/ipc/PreallocatedProcessManager.cpp b/dom/ipc/PreallocatedProcessManager.cpp
+index cfdb2cd..66613ed 100644
+--- a/dom/ipc/PreallocatedProcessManager.cpp
++++ b/dom/ipc/PreallocatedProcessManager.cpp
+@@ -354,7 +354,8 @@ PreallocatedProcessManagerImpl::OnNuwaReady()
+ {
+   NS_ASSERTION(!mIsNuwaReady, "Multiple Nuwa processes created!");
+   ProcessPriorityManager::SetProcessPriority(mPreallocatedAppProcess,
+-                                             hal::PROCESS_PRIORITY_FOREGROUND);
++                                             hal::PROCESS_PRIORITY_FOREGROUND,
++                                             true);
+   mIsNuwaReady = true;
+   if (Preferences::GetBool("dom.ipc.processPriorityManager.testMode")) {
+     AutoJSContext cx;
+diff --git a/dom/ipc/ProcessPriorityManager.cpp b/dom/ipc/ProcessPriorityManager.cpp
+index 6627e2c..e952c1c 100644
+--- a/dom/ipc/ProcessPriorityManager.cpp
++++ b/dom/ipc/ProcessPriorityManager.cpp
+@@ -127,6 +127,7 @@ public:
+    */
+   void SetProcessPriority(ContentParent* aContentParent,
+                           ProcessPriority aPriority,
++                          bool aMinimizeMemory,
+                           uint32_t aBackgroundLRU = 0);
+ 
+   /**
+@@ -263,10 +264,12 @@ public:
+    * ComputeCPUPriority()).
+    */
+   void SetPriorityNow(ProcessPriority aPriority,
++                      bool aMinimizeMemory,
+                       uint32_t aBackgroundLRU = 0);
+ 
+   void SetPriorityNow(ProcessPriority aPriority,
+                       ProcessCPUPriority aCPUPriority,
++                      bool aMinimizeMemory,
+                       uint32_t aBackgroundLRU = 0);
+ 
+   void ShutDown();
+@@ -466,12 +469,13 @@ ProcessPriorityManagerImpl::GetParticularProcessPriorityManager(
+ void
+ ProcessPriorityManagerImpl::SetProcessPriority(ContentParent* aContentParent,
+                                                ProcessPriority aPriority,
++                                               bool aMinimizeMemory,
+                                                uint32_t aBackgroundLRU)
+ {
+   MOZ_ASSERT(aContentParent);
+   nsRefPtr<ParticularProcessPriorityManager> pppm =
+     GetParticularProcessPriorityManager(aContentParent);
+-  pppm->SetPriorityNow(aPriority, aBackgroundLRU);
++  pppm->SetPriorityNow(aPriority, aMinimizeMemory, aBackgroundLRU);
+ }
+ 
+ void
+@@ -812,13 +816,13 @@ ParticularProcessPriorityManager::ResetPriority()
+     return;
+   }
+ 
+-  SetPriorityNow(processPriority);
++  SetPriorityNow(processPriority, true);
+ }
+ 
+ void
+ ParticularProcessPriorityManager::ResetPriorityNow()
+ {
+-  SetPriorityNow(ComputePriority());
++  SetPriorityNow(ComputePriority(), true);
+ }
+ 
+ void
+@@ -943,19 +947,21 @@ ParticularProcessPriorityManager::ComputeCPUPriority()
+ void
+ ParticularProcessPriorityManager::ResetCPUPriorityNow()
+ {
+-  SetPriorityNow(mPriority);
++  SetPriorityNow(mPriority, true);
+ }
+ 
+ void
+ ParticularProcessPriorityManager::SetPriorityNow(ProcessPriority aPriority,
++                                                 bool aMinimizeMemory,
+                                                  uint32_t aBackgroundLRU)
+ {
+-  SetPriorityNow(aPriority, ComputeCPUPriority(), aBackgroundLRU);
++  SetPriorityNow(aPriority, ComputeCPUPriority(), aMinimizeMemory, aBackgroundLRU);
+ }
+ 
+ void
+ ParticularProcessPriorityManager::SetPriorityNow(ProcessPriority aPriority,
+                                                  ProcessCPUPriority aCPUPriority,
++                                                 bool aMinimizeMemory,
+                                                  uint32_t aBackgroundLRU)
+ {
+   if (aPriority == PROCESS_PRIORITY_UNKNOWN) {
+@@ -1018,7 +1024,7 @@ ParticularProcessPriorityManager::SetPriorityNow(ProcessPriority aPriority,
+ 
+   if (aPriority >= PROCESS_PRIORITY_FOREGROUND) {
+     unused << mContentParent->SendCancelMinimizeMemoryUsage();
+-  } else {
++  } else if (aMinimizeMemory) {
+     unused << mContentParent->SendMinimizeMemoryUsage();
+   }
+ 
+@@ -1368,14 +1374,15 @@ ProcessPriorityManager::Init()
+ 
+ /* static */ void
+ ProcessPriorityManager::SetProcessPriority(ContentParent* aContentParent,
+-                                           ProcessPriority aPriority)
++                                           ProcessPriority aPriority,
++                                           bool aMinimizeMemory)
+ {
+   MOZ_ASSERT(aContentParent);
+ 
+   ProcessPriorityManagerImpl* singleton =
+     ProcessPriorityManagerImpl::GetSingleton();
+   if (singleton) {
+-    singleton->SetProcessPriority(aContentParent, aPriority);
++    singleton->SetProcessPriority(aContentParent, aPriority, aMinimizeMemory);
+   }
+ }
+ 
+diff --git a/dom/ipc/ProcessPriorityManager.h b/dom/ipc/ProcessPriorityManager.h
+index 50ecdaa..88e245d 100644
+--- a/dom/ipc/ProcessPriorityManager.h
++++ b/dom/ipc/ProcessPriorityManager.h
+@@ -57,7 +57,8 @@ public:
+    * overwritten by the process priority manager.
+    */
+   static void SetProcessPriority(dom::ContentParent* aContentParent,
+-                                 hal::ProcessPriority aPriority);
++                                 hal::ProcessPriority aPriority,
++                                 bool aMinimizeMemory);
+ 
+   /**
+    * Returns true iff this process's priority is FOREGROUND*.
+diff --git a/dom/ipc/TabChild.cpp b/dom/ipc/TabChild.cpp
+index 3702a27..8c7665d 100644
+--- a/dom/ipc/TabChild.cpp
++++ b/dom/ipc/TabChild.cpp
+@@ -243,6 +243,21 @@ TabChild::PreloadSlowThings()
+     ClearOnShutdown(&sPreallocatedTab);
+ }
+ 
++/* static */ void
++TabChild::PreloadSlowThings2()
++{
++    // If sPreallocatedTab does not exist, it means first preload stage hasn't
++    // done.
++    if (!sPreallocatedTab) {
++        PreloadSlowThings();
++    }
++
++    // Load, compile, and run these scripts.
++    sPreallocatedTab->RecvLoadRemoteScript(
++        NS_LITERAL_STRING("chrome://global/content/preload2.js"));
++        //NS_LITERAL_STRING("chrome://global/content/preload2.js"), true);
++}
++
+ /*static*/ already_AddRefed<TabChild>
+ TabChild::Create(ContentChild* aManager, const TabContext &aContext, uint32_t aChromeFlags)
+ {
+diff --git a/dom/ipc/TabChild.h b/dom/ipc/TabChild.h
+index ccc8899..0717691 100644
+--- a/dom/ipc/TabChild.h
++++ b/dom/ipc/TabChild.h
+@@ -169,6 +169,7 @@ public:
+      * on the critical path.
+      */
+     static void PreloadSlowThings();
++    static void PreloadSlowThings2();
+ 
+     /** Return a TabChild with the given attributes. */
+     static already_AddRefed<TabChild>
+diff --git a/dom/ipc/jar.mn b/dom/ipc/jar.mn
+index 7b2d19e..4eab565 100644
+--- a/dom/ipc/jar.mn
++++ b/dom/ipc/jar.mn
+@@ -9,3 +9,4 @@ toolkit.jar:
+         content/global/BrowserElementChildPreload.js (../browser-element/BrowserElementChildPreload.js)
+ *       content/global/BrowserElementPanning.js (../browser-element/BrowserElementPanning.js)
+         content/global/preload.js (preload.js)
++        content/global/preload2.js (preload2.js)
+diff --git a/dom/ipc/preload.js b/dom/ipc/preload.js
+index b54faf7..767046f 100644
+--- a/dom/ipc/preload.js
++++ b/dom/ipc/preload.js
+@@ -23,11 +23,9 @@ const BrowserElementIsPreloaded = true;
+   Cu.import("resource://gre/modules/DOMRequestHelper.jsm");
+   Cu.import("resource://gre/modules/FileUtils.jsm");
+   Cu.import("resource://gre/modules/Geometry.jsm");
+-  Cu.import("resource://gre/modules/IndexedDBHelper.jsm");
+   Cu.import("resource://gre/modules/NetUtil.jsm");
+   Cu.import("resource://gre/modules/ObjectWrapper.jsm");
+   Cu.import("resource://gre/modules/Services.jsm");
+-  Cu.import("resource://gre/modules/SettingsDB.jsm");
+   Cu.import("resource://gre/modules/SettingsQueue.jsm");
+   Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ 
+@@ -38,7 +36,6 @@ const BrowserElementIsPreloaded = true;
+   Cc["@mozilla.org/categorymanager;1"].getService(Ci["nsICategoryManager"]);
+   Cc["@mozilla.org/childprocessmessagemanager;1"].getService(Ci["nsIMessageSender"]);
+   Cc["@mozilla.org/consoleservice;1"].getService(Ci["nsIConsoleService"]);
+-  Cc["@mozilla.org/cookieService;1"].getService(Ci["nsICookieService"]);
+   Cc["@mozilla.org/docshell/urifixup;1"].getService(Ci["nsIURIFixup"]);
+   Cc["@mozilla.org/dom/dom-request-service;1"].getService(Ci["nsIDOMRequestService"]);
+   Cc["@mozilla.org/embedcomp/prompt-service;1"].getService(Ci["nsIPromptService"]);
+@@ -64,7 +61,6 @@ const BrowserElementIsPreloaded = true;
+   Cc["@mozilla.org/network/url-parser;1?auth=yes"].getService(Ci["nsIURLParser"]);
+   Cc["@mozilla.org/observer-service;1"].getService(Ci["nsIObserverService"]);
+   Cc["@mozilla.org/permissionmanager;1"].getService(Ci["nsIPermissionManager"]);
+-  Cc["@mozilla.org/preferences-service;1"].getService(Ci["nsIPrefBranch"]);
+   Cc["@mozilla.org/scriptsecuritymanager;1"].getService(Ci["nsIScriptSecurityManager"]);
+   Cc["@mozilla.org/storage/service;1"].getService(Ci["mozIStorageService"]);
+   Cc["@mozilla.org/system-info;1"].getService(Ci["nsIPropertyBag2"]);
+@@ -106,6 +102,4 @@ const BrowserElementIsPreloaded = true;
+   Services.io.getProtocolHandler("default");
+ 
+   docShell.isActive = false;
+-  docShell.createAboutBlankContentViewer(null);
+-
+ })(this);
+diff --git a/dom/ipc/preload2.js b/dom/ipc/preload2.js
+new file mode 100644
+index 0000000..3370810
+--- /dev/null
++++ b/dom/ipc/preload2.js
+@@ -0,0 +1,13 @@
++(function (global) {
++  "use strict";
++
++  let Cu = Components.utils;
++  let Cc = Components.classes;
++  let Ci = Components.interfaces;
++
++  Cu.import("resource://gre/modules/IndexedDBHelper.jsm");
++  Cu.import("resource://gre/modules/SettingsDB.jsm");
++  Cc["@mozilla.org/cookieService;1"].getService(Ci["nsICookieService"]);
++  Cc["@mozilla.org/preferences-service;1"].getService(Ci["nsIPrefBranch"]);
++  docShell.createAboutBlankContentViewer(null);
++})(this);
+-- 
+1.7.9.5
+
