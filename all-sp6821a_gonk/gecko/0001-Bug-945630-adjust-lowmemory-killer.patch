@@ -1,14 +1,14 @@
-From ee91e8a26de806c54c083a142d3edc036a49106c Mon Sep 17 00:00:00 2001
+From 9aed5bf3193062c2b2c8a4b6d75e7e7defd825fd Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:02:09 +0800
 Subject: [PATCH 01/11] Bug 945630 - adjust lowmemory killer.
 
 ---
- b2g/app/b2g.js |   14 +++++++-------
- 1 file changed, 7 insertions(+), 7 deletions(-)
+ b2g/app/b2g.js |   12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
 
 diff --git a/b2g/app/b2g.js b/b2g/app/b2g.js
-index bf76908..87e18b3 100644
+index bf76908..5581871 100644
 --- a/b2g/app/b2g.js
 +++ b/b2g/app/b2g.js
 @@ -635,22 +635,22 @@ pref("dom.ipc.processPriorityManager.backgroundLRUPoolLevels", 5);
@@ -38,17 +38,15 @@ index bf76908..87e18b3 100644
  pref("hal.processPriorityManager.gonk.BACKGROUND_PERCEIVABLE.Nice", 7);
  
  pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.OomScoreAdjust", 534);
-@@ -658,8 +658,8 @@ pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.KillUnderMB", 8);
+@@ -658,7 +658,7 @@ pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.KillUnderMB", 8);
  pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.Nice", 18);
  
  pref("hal.processPriorityManager.gonk.BACKGROUND.OomScoreAdjust", 667);
 -pref("hal.processPriorityManager.gonk.BACKGROUND.KillUnderMB", 20);
--pref("hal.processPriorityManager.gonk.BACKGROUND.Nice", 18);
-+pref("hal.processPriorityManager.gonk.BACKGROUND.KillUnderMB", 10);
-+pref("hal.processPriorityManager.gonk.BACKGROUND.Nice", 15);
++pref("hal.processPriorityManager.gonk.BACKGROUND.KillUnderMB", 15);
+ pref("hal.processPriorityManager.gonk.BACKGROUND.Nice", 18);
  
  // Processes get this niceness when they have low CPU priority.
- pref("hal.processPriorityManager.gonk.LowCPUNice", 18);
 @@ -671,7 +671,7 @@ pref("hal.processPriorityManager.gonk.LowCPUNice", 18);
  // this too high, then we'll send out a memory pressure event every Z seconds
  // (see below), even while we have processes that we would happily kill in
