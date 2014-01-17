@@ -1,7 +1,7 @@
-From 617c19615c4aa3f248a257f167f00810bece5aa6 Mon Sep 17 00:00:00 2001
+From cb4ec3ffc8fd687fc9c4834a256b6d1bcc94e622 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 12:33:29 +0800
-Subject: [PATCH 05/11] Bug 903149 - Minify the chrome js code.
+Subject: [PATCH 05/12] Bug 903149 - Minify the chrome js code.
 
 ---
  build/virtualenv_packages.txt                      |    1 +
@@ -787,10 +787,10 @@ index 0000000..acd35ca
 +
 +quit(ast0 == ast1 ? 0 : 1);
 diff --git a/toolkit/mozapps/installer/packager.mk b/toolkit/mozapps/installer/packager.mk
-index 889dd0f..f08b69e 100644
+index 1851a60..70f034a 100644
 --- a/toolkit/mozapps/installer/packager.mk
 +++ b/toolkit/mozapps/installer/packager.mk
-@@ -675,6 +675,16 @@ endif
+@@ -701,6 +701,16 @@ endif
  
  export NO_PKG_FILES USE_ELF_HACK ELF_HACK_FLAGS
  
@@ -807,7 +807,7 @@ index 889dd0f..f08b69e 100644
  # Override the value of OMNIJAR_NAME from config.status with the value
  # set earlier in this file.
  
-@@ -686,6 +696,9 @@ stage-package: $(MOZ_PKG_MANIFEST)
+@@ -712,6 +722,9 @@ stage-package: $(MOZ_PKG_MANIFEST)
  		$(addprefix --removals ,$(MOZ_PKG_REMOVALS)) \
  		$(if $(filter-out 0,$(MOZ_PKG_FATAL_WARNINGS)),,--ignore-errors) \
  		$(if $(MOZ_PACKAGER_MINIFY),--minify) \

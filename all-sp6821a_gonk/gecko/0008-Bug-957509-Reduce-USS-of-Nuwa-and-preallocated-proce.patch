@@ -1,7 +1,7 @@
-From 3de43d5d3e24e2face1cfbd28f6730f3bf81030a Mon Sep 17 00:00:00 2001
+From 7ceaf30fe88a649f0037a7782423237f571cc8fb Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 23:44:27 +0800
-Subject: [PATCH 08/11] Bug 957509 - Reduce USS of Nuwa and preallocated
+Subject: [PATCH 08/12] Bug 957509 - Reduce USS of Nuwa and preallocated
  process.
 
 ---
@@ -220,7 +220,7 @@ index cfdb2cd..66613ed 100644
    if (Preferences::GetBool("dom.ipc.processPriorityManager.testMode")) {
      AutoJSContext cx;
 diff --git a/dom/ipc/ProcessPriorityManager.cpp b/dom/ipc/ProcessPriorityManager.cpp
-index 6627e2c..e952c1c 100644
+index 36ba3bb0..dcd1de8 100644
 --- a/dom/ipc/ProcessPriorityManager.cpp
 +++ b/dom/ipc/ProcessPriorityManager.cpp
 @@ -127,6 +127,7 @@ public:
@@ -259,7 +259,7 @@ index 6627e2c..e952c1c 100644
  }
  
  void
-@@ -812,13 +816,13 @@ ParticularProcessPriorityManager::ResetPriority()
+@@ -821,13 +825,13 @@ ParticularProcessPriorityManager::ResetPriority()
      return;
    }
  
@@ -275,7 +275,7 @@ index 6627e2c..e952c1c 100644
  }
  
  void
-@@ -943,19 +947,21 @@ ParticularProcessPriorityManager::ComputeCPUPriority()
+@@ -952,19 +956,21 @@ ParticularProcessPriorityManager::ComputeCPUPriority()
  void
  ParticularProcessPriorityManager::ResetCPUPriorityNow()
  {
@@ -299,7 +299,7 @@ index 6627e2c..e952c1c 100644
                                                   uint32_t aBackgroundLRU)
  {
    if (aPriority == PROCESS_PRIORITY_UNKNOWN) {
-@@ -1018,7 +1024,7 @@ ParticularProcessPriorityManager::SetPriorityNow(ProcessPriority aPriority,
+@@ -1027,7 +1033,7 @@ ParticularProcessPriorityManager::SetPriorityNow(ProcessPriority aPriority,
  
    if (aPriority >= PROCESS_PRIORITY_FOREGROUND) {
      unused << mContentParent->SendCancelMinimizeMemoryUsage();
@@ -308,7 +308,7 @@ index 6627e2c..e952c1c 100644
      unused << mContentParent->SendMinimizeMemoryUsage();
    }
  
-@@ -1368,14 +1374,15 @@ ProcessPriorityManager::Init()
+@@ -1377,14 +1383,15 @@ ProcessPriorityManager::Init()
  
  /* static */ void
  ProcessPriorityManager::SetProcessPriority(ContentParent* aContentParent,
@@ -341,7 +341,7 @@ index 50ecdaa..88e245d 100644
    /**
     * Returns true iff this process's priority is FOREGROUND*.
 diff --git a/dom/ipc/TabChild.cpp b/dom/ipc/TabChild.cpp
-index 30bd89a..321c6e3 100644
+index 4cfbc6a..fd39341 100644
 --- a/dom/ipc/TabChild.cpp
 +++ b/dom/ipc/TabChild.cpp
 @@ -243,6 +243,21 @@ TabChild::PreloadSlowThings()

@@ -1,8 +1,8 @@
-From 64ada79faf2e5dce90608e0cf2cd29721fe087f1 Mon Sep 17 00:00:00 2001
+From 6d30e6accd6d3f2bc04c3dc6760e4da5a8709c52 Mon Sep 17 00:00:00 2001
 From: Kai-Zhen Li <kli@mozilla.com>
 Date: Thu, 16 Jan 2014 20:28:53 +0800
-Subject: [PATCH] Bug 959966 -  avoid preallocated process from being killed
- for low memory devices.
+Subject: [PATCH 12/12] Bug 959966 -  avoid preallocated process from being
+ killed for low memory devices.
 
 ---
  dom/ipc/ContentParent.cpp |    7 +------

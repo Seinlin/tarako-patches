@@ -1,21 +1,20 @@
-From eb072ffd28a9f8deac5a82204bf744bf054f2b4e Mon Sep 17 00:00:00 2001
+From 1572c0917e70d5c7657cb97eb85d8dc00f95a060 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:02:49 +0800
-Subject: [PATCH 02/11] Bug xxxxxx - disable hw composer.
+Subject: [PATCH 02/12] Bug xxxxxx - disable hw composer.
 
 ---
- b2g/app/b2g.js |    2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ b2g/app/b2g.js |    1 +
+ 1 file changed, 1 insertion(+)
 
 diff --git a/b2g/app/b2g.js b/b2g/app/b2g.js
-index 87e18b3..6a07df5 100644
+index ebcd9a7..3a9b839 100644
 --- a/b2g/app/b2g.js
 +++ b/b2g/app/b2g.js
-@@ -268,7 +268,7 @@ pref("layers.offmainthreadcomposition.async-animations", true);
+@@ -268,6 +268,7 @@ pref("layers.offmainthreadcomposition.async-animations", true);
  pref("layers.async-video.enabled", true);
  pref("layers.async-pan-zoom.enabled", true);
  pref("gfx.content.azure.backends", "cairo");
--pref("layers.composer2d.enabled", true);
 +pref("layers.composer2d.enabled", false);
  #endif
  

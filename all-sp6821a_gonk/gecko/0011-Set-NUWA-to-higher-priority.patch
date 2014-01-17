@@ -1,7 +1,7 @@
-From a34099d9fa1027ef03da125db08d8d148f00ffc4 Mon Sep 17 00:00:00 2001
+From b3d36ae06e4965e686ff87a1ef60742f9bf1fa27 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Tue, 14 Jan 2014 12:06:10 +0800
-Subject: [PATCH 11/11] Set NUWA to higher priority.
+Subject: [PATCH 11/12] Set NUWA to higher priority.
 
 ---
  dom/ipc/PreallocatedProcessManager.cpp |    2 +-

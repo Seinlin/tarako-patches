@@ -1,22 +1,62 @@
-From 1763511dc2e921ddda3bb95b800fd4d2b775ae52 Mon Sep 17 00:00:00 2001
+From 8d3aa172289734cd47d5ea0577ba831ed623df31 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Mon, 13 Jan 2014 00:06:57 +0800
-Subject: [PATCH 09/11] Bug 948276 - Lazy load accessibility support.
+Subject: [PATCH 09/12] Bug 948276 - Lazy load accessibility support.
 
 ---
- b2g/chrome/content/settings.js |    8 ++++++++
+ b2g/chrome/content/settings.js |   47 +++++++++-------------------------------
  b2g/chrome/content/shell.js    |    2 --
- 2 files changed, 8 insertions(+), 2 deletions(-)
+ 2 files changed, 10 insertions(+), 39 deletions(-)
 
 diff --git a/b2g/chrome/content/settings.js b/b2g/chrome/content/settings.js
-index d91c581..e7b7276 100644
+index 48cfe75..25d1a30 100644
 --- a/b2g/chrome/content/settings.js
 +++ b/b2g/chrome/content/settings.js
-@@ -476,3 +476,11 @@ SettingsListener.observe("layers.draw-borders", false, function(value) {
- SettingsListener.observe("layers.composer2d.enabled", true, function(value) {
-   Services.prefs.setBoolPref("layers.composer2d.enabled", value);
+@@ -527,41 +527,14 @@ SettingsListener.observe("debug.paint-flashing.enabled", false, function(value)
+ SettingsListener.observe("layers.draw-borders", false, function(value) {
+   Services.prefs.setBoolPref("layers.draw-borders", value);
  });
-+
++SettingsListener.observe("layers.composer2d.enabled", true, function(value) {
++  Services.prefs.setBoolPref("layers.composer2d.enabled", value);
++});
+ 
+-(function Composer2DSettingToPref() {
+-  //layers.composer.enabled can be toggled in three ways
+-  //In order of precedence they are:
+-  //First: layers.composer.enabled mozSetting
+-  //Second: layers.composer.enabled gecko pref
+-  //Third: ro.display.colorfill gonk prop
+-
+-  var req = navigator.mozSettings.createLock().get('layers.composer2d.enabled');
+-  req.onsuccess = function() {
+-    if(typeof(req.result['layers.composer2d.enabled']) == 'undefined') {
+-      var enabled = false;
+-      if (Services.prefs.getPrefType('layers.composer2d.enabled') == Ci.nsIPrefBranch.PREF_BOOL) {
+-        enabled = Services.prefs.getBoolPref('layers.composer2d.enabled');
+-      }
+-      else {
+-#ifdef MOZ_WIDGET_GONK
+-        if (libcutils.property_get('ro.display.colorfill') == 1) {
+-          enabled = true;
+-        }
+-        else {
+-          enabled = false;
+-        }
+-#endif
+-      }
+-      navigator.mozSettings.createLock().set(
+-        {'layers.composer2d.enabled': enabled});
+-    }
+-
+-    SettingsListener.observe("layers.composer2d.enabled", true, function(value) {
+-      Services.prefs.setBoolPref("layers.composer2d.enabled", value);
+-    });
+-  };
+-  req.onerror = function() {
+-    dump("Error configuring layers.composer2d.enabled setting");
+-  };
+-
+-})();
 +// ================ Accessibility ============
 +SettingsListener.observe("accessibility.screenreader", false, function(value) {
 +  if (value) {
