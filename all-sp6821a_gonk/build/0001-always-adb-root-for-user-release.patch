@@ -1,0 +1,83 @@
+From b07c5eff61b7237e79bfdd1a56b4950bbcbcdcde Mon Sep 17 00:00:00 2001
+From: thomastsai <thomas@life100.cc>
+Date: Fri, 17 Jan 2014 18:39:41 +0800
+Subject: [PATCH] always adb root for user release
+
+---
+ core/Makefile |    6 +++++-
+ core/main.mk  |   13 ++++++++++---
+ 2 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/core/Makefile b/core/Makefile
+index 78cb62a..97f0052 100644
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -283,7 +283,7 @@ DEFAULT_KEY_CERT_PAIR := $(DEFAULT_SYSTEM_DEV_CERTIFICATE)
+ # Rules that need to be present for the all targets, even
+ # if they don't do anything.
+ .PHONY: systemimage
+-systemimage:
++systemimage: kernelheader
+ 
+ # -----------------------------------------------------------------
+ 
+@@ -406,6 +406,10 @@ else	# TARGET_NO_KERNEL
+ INSTALLED_BOOTIMAGE_TARGET := $(INSTALLED_RAMDISK_TARGET)
+ endif
+ 
++ifeq ($(strip $(TARGET_NO_BOOTLOADER)),true)
++INSTALLED_UBOOT_TARGET :=
++endif
++
+ # -----------------------------------------------------------------
+ # NOTICE files
+ #
+diff --git a/core/main.mk b/core/main.mk
+index 72658a7..b5f38a9 100644
+--- a/core/main.mk
++++ b/core/main.mk
+@@ -225,7 +225,7 @@ user_variant := $(filter userdebug user,$(TARGET_BUILD_VARIANT))
+ enable_target_debugging := true
+ ifneq (,$(user_variant))
+   # Target is secure in user builds.
+-  ADDITIONAL_DEFAULT_PROPERTIES += ro.secure=1
++  ADDITIONAL_DEFAULT_PROPERTIES += ro.secure=0
+ 
+   tags_to_install := user
+   ifeq ($(user_variant),userdebug)
+@@ -269,7 +269,7 @@ ifeq (true,$(strip $(enable_target_debugging)))
+   INCLUDE_TEST_OTA_KEYS := true
+ else # !enable_target_debugging
+   # Target is less debuggable and adbd is off by default
+-  ADDITIONAL_DEFAULT_PROPERTIES += ro.debuggable=0
++  ADDITIONAL_DEFAULT_PROPERTIES += ro.debuggable=1
+ endif # !enable_target_debugging
+ 
+ ## eng ##
+@@ -688,6 +688,12 @@ userdatatarball: $(INSTALLED_USERDATATARBALL_TARGET)
+ .PHONY: bootimage
+ bootimage: $(INSTALLED_BOOTIMAGE_TARGET)
+ 
++.PHONY: bootloader
++bootloader: $(INSTALLED_UBOOT_TARGET)
++
++.PHONY: kernelheader
++droid: kernelheader
++
+ ifeq ($(BUILD_TINY_ANDROID), true)
+ INSTALLED_RECOVERYIMAGE_TARGET :=
+ endif
+@@ -695,8 +701,9 @@ endif
+ # Build files and then package it into the rom formats
+ .PHONY: droidcore
+ droidcore: files \
+-	systemimage \
++	$(INSTALLED_UBOOT_TARGET) \
+ 	$(INSTALLED_BOOTIMAGE_TARGET) \
++	systemimage \
+ 	$(INSTALLED_RECOVERYIMAGE_TARGET) \
+ 	$(INSTALLED_USERDATAIMAGE_TARGET) \
+ 	$(INSTALLED_FILES_FILE)
+-- 
+1.7.9.5
+
