@@ -45,9 +45,9 @@ index 0000000..e7cdce6
 +# Python by Baruch Even. It was rewritten by Dave St.Germain for speed.
 +#
 +# The MIT License (MIT)
-+# 
++#
 +# Copyright (c) 2013 Dave St.Germain
-+# 
++#
 +# Permission is hereby granted, free of charge, to any person obtaining a copy
 +# of this software and associated documentation files (the "Software"), to deal
 +# in the Software without restriction, including without limitation the rights
@@ -57,7 +57,7 @@ index 0000000..e7cdce6
 +# 
 +# The above copyright notice and this permission notice shall be included in
 +# all copies or substantial portions of the Software.
-+# 
++#
 +# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 +# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 +# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -87,7 +87,7 @@ index 0000000..e7cdce6
 +    """
 +    returns a minified version of the javascript string
 +    """
-+    if not is_3:        
++    if not is_3:
 +        if cStringIO and not isinstance(js, unicode):
 +            # strings can use cStringIO for a 3x performance
 +            # improvement, but unicode (in python2) cannot
