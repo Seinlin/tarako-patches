@@ -1,7 +1,7 @@
-From 8d3aa172289734cd47d5ea0577ba831ed623df31 Mon Sep 17 00:00:00 2001
+From a08fd3911ba537e3107eed25c2b213f0aec7f4de Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Mon, 13 Jan 2014 00:06:57 +0800
-Subject: [PATCH 09/12] Bug 948276 - Lazy load accessibility support.
+Subject: [PATCH 09/13] Bug 948276 - Lazy load accessibility support.
 
 ---
  b2g/chrome/content/settings.js |   47 +++++++++-------------------------------

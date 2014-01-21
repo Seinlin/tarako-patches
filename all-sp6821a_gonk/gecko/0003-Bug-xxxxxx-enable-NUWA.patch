@@ -1,7 +1,7 @@
-From cdf4a4fb5e08a78f70763bd0e0a7c9b94f8de8fc Mon Sep 17 00:00:00 2001
+From 3b8769955b5019cec0ac7355b5cf0b88c66c7dc6 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:03:24 +0800
-Subject: [PATCH 03/12] Bug xxxxxx - enable NUWA.
+Subject: [PATCH 03/13] Bug xxxxxx - enable NUWA.
 
 ---
  b2g/confvars.sh |    2 +-

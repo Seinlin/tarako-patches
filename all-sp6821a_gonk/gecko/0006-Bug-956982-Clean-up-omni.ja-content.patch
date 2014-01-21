@@ -1,7 +1,7 @@
-From 42a286f74fb1f5b5003fcff7d5e9604f8a564779 Mon Sep 17 00:00:00 2001
+From 398ff9cb79fcb80e34eb75c4b2e8c9100fce90fe Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 14:14:18 +0800
-Subject: [PATCH 06/12] Bug 956982 - Clean up omni.ja content.
+Subject: [PATCH 06/13] Bug 956982 - Clean up omni.ja content.
 
 ---
  b2g/confvars.sh                                   |    3 ++

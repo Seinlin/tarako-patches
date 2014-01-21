@@ -1,7 +1,7 @@
-From 2cbcb37106eaa9811e01371062873429cf385493 Mon Sep 17 00:00:00 2001
+From f461129e16ce7205a7e19f1031df1f3108dba49f Mon Sep 17 00:00:00 2001
 From: Kai-Zhen Li <kli@mozilla.com>
 Date: Mon, 20 Jan 2014 16:43:16 +0800
-Subject: [PATCH] Bug 960516 - WIP to fix app launch issue.
+Subject: [PATCH 13/13] Bug 960516 - WIP to fix app launch issue.
 
 ---
  dom/base/nsJSEnvironment.cpp |    9 +++++++++

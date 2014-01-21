@@ -1,7 +1,7 @@
-From 5740c974f69d6717aa05d9c83ca92136d6103a89 Mon Sep 17 00:00:00 2001
+From 6db98cde11f44b6836f0c9e8edc85722602f9d35 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:07:16 +0800
-Subject: [PATCH 04/12] Bug 864931 - Rewrite net worker in C++.
+Subject: [PATCH 04/13] Bug 864931 - Rewrite net worker in C++.
 
 ---
  dom/network/src/NetUtils.cpp              |  181 ++++
@@ -431,7 +431,7 @@ index 0000000..ed66aa7
 +
 +// Retry 20 times (2 seconds) for usb state transition.
 +static const uint32_t USB_FUNCTION_RETRY_TIMES = 20;
-+// Check "sys.usb.state" every 100ms.
++// Check "sys.usb.state" every 100ms. 
 +static const uint32_t USB_FUNCTION_RETRY_INTERVAL = 100;
 +
 +// 1xx - Requested action is proceeding
@@ -520,7 +520,7 @@ index 0000000..ed66aa7
 +    delete aChain;
 +    return;
 +  }
-+
++  
 +  (*f)(aChain, next, aResult);
 +}
 +
@@ -1235,7 +1235,7 @@ index 0000000..ed66aa7
 + * Handle received data from netd.
 + */
 +void NetworkUtils::onNetdMessage(const NetdCommand& aCommand)
-+{
++{  
 +  char* data = (char*)aCommand.mData;
 +
 +  // get code & reason.
@@ -1489,7 +1489,7 @@ index 0000000..ed66aa7
 +    RUN_CHAIN(aOptions, gWifiEnableChain, wifiTetheringFail)
 +  } else {
 +    DEBUG("Stopping Wifi Tethering on %s <-> %s",
-+           GET_CHAR(mInternalIfname), GET_CHAR(mExternalIfname));
++           GET_CHAR(mInternalIfname), GET_CHAR(mExternalIfname));    
 +    RUN_CHAIN(aOptions, gWifiDisableChain, wifiTetheringFail)
 +  }
 +  return true;
@@ -1539,7 +1539,7 @@ index 0000000..ed66aa7
 +    postMessage(aOptions, result);
 +    retry = 0;
 +    return;
-+  }
++  } 
 +  if (retry < USB_FUNCTION_RETRY_TIMES) {
 +    retry++;
 +    usleep(USB_FUNCTION_RETRY_INTERVAL * 1000);

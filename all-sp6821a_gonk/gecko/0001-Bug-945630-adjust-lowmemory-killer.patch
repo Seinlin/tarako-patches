@@ -1,7 +1,7 @@
-From ea4f82526ba18e619e1b65fe38e3b6041441ac32 Mon Sep 17 00:00:00 2001
+From 953b6830deaf3e4ccda16cdf329e0e93d4790268 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:02:09 +0800
-Subject: [PATCH 01/12] Bug 945630 - adjust lowmemory killer.
+Subject: [PATCH 01/13] Bug 945630 - adjust lowmemory killer.
 
 ---
  b2g/app/b2g.js |   12 ++++++------

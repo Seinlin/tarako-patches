@@ -1,7 +1,7 @@
-From 7ceaf30fe88a649f0037a7782423237f571cc8fb Mon Sep 17 00:00:00 2001
+From a98a33a1e664e9c9e3f69949f7de3194f189fac7 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sun, 12 Jan 2014 23:44:27 +0800
-Subject: [PATCH 08/12] Bug 957509 - Reduce USS of Nuwa and preallocated
+Subject: [PATCH 08/13] Bug 957509 - Reduce USS of Nuwa and preallocated
  process.
 
 ---

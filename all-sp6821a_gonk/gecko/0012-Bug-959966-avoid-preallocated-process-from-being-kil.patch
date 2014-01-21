@@ -1,7 +1,7 @@
-From 6d30e6accd6d3f2bc04c3dc6760e4da5a8709c52 Mon Sep 17 00:00:00 2001
+From d357402acac0084276218eedb5ddd653762829e3 Mon Sep 17 00:00:00 2001
 From: Kai-Zhen Li <kli@mozilla.com>
 Date: Thu, 16 Jan 2014 20:28:53 +0800
-Subject: [PATCH 12/12] Bug 959966 -  avoid preallocated process from being
+Subject: [PATCH 12/13] Bug 959966 -  avoid preallocated process from being
  killed for low memory devices.
 
 ---

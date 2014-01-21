@@ -1,7 +1,7 @@
-From 1572c0917e70d5c7657cb97eb85d8dc00f95a060 Mon Sep 17 00:00:00 2001
+From 42cfc64458e7eeebaba1a122035fbb14a7b85279 Mon Sep 17 00:00:00 2001
 From: Kaizhen <kli@mozilla.com>
 Date: Sat, 11 Jan 2014 17:02:49 +0800
-Subject: [PATCH 02/12] Bug xxxxxx - disable hw composer.
+Subject: [PATCH 02/13] Bug xxxxxx - disable hw composer.
 
 ---
  b2g/app/b2g.js |    1 +

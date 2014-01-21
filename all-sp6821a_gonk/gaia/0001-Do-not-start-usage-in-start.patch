@@ -1,7 +1,7 @@
-From b338127530a12e742e85571782ec7cb6bda144c9 Mon Sep 17 00:00:00 2001
-From: Kaizhen <kli@mozilla.com>
-Date: Sun, 19 Jan 2014 11:13:33 +0800
-Subject: [PATCH] Bug-959054-Do-not-launch-the-usage-widget-frame-when start
+From 996d6ad1cdddaf8113eab943e44e5b35b067f156 Mon Sep 17 00:00:00 2001
+From: Kai-Zhen Li <kli@mozilla.com>
+Date: Tue, 21 Jan 2014 13:27:32 +0800
+Subject: [PATCH 1/2] Do not start usage in start.
 
 ---
  apps/system/js/cost_control.js |    2 --
