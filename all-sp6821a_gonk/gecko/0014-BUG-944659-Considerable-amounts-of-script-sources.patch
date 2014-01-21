@@ -1,0 +1,771 @@
+From 9708022ef209192f0ee56363a62a66dbd3200297 Mon Sep 17 00:00:00 2001
+From: thomastsai <thomas@life100.cc>
+Date: Tue, 21 Jan 2014 15:59:20 +0800
+Subject: [PATCH] BUG 944659-Considerable amounts of script-sources
+
+---
+ content/base/src/nsFrameMessageManager.cpp    |    9 ++++
+ content/base/src/nsScriptLoader.cpp           |   57 +++++++++++++++++++++++++
+ content/base/src/nsScriptLoader.h             |   26 +++++++++++
+ content/xul/content/src/nsXULElement.cpp      |   11 ++++-
+ content/xul/content/src/nsXULElement.h        |    2 +-
+ content/xul/document/src/XULDocument.cpp      |    4 +-
+ content/xul/document/src/nsXULContentSink.cpp |    2 +-
+ dom/workers/ScriptLoader.cpp                  |    1 +
+ js/src/frontend/BytecodeCompiler.cpp          |   20 ++++++++-
+ js/src/jsapi.cpp                              |   19 +++++++++
+ js/src/jsapi.h                                |   11 ++++-
+ js/src/jsfriendapi.h                          |    3 +-
+ js/src/jsscript.cpp                           |   43 ++++++++++++++++++-
+ js/src/jsscript.h                             |   18 +++++++-
+ js/src/shell/js.cpp                           |    4 +-
+ js/xpconnect/loader/mozJSComponentLoader.cpp  |   14 ++++--
+ js/xpconnect/loader/mozJSSubScriptLoader.cpp  |   16 +++++--
+ js/xpconnect/src/XPCJSRuntime.cpp             |   27 ++++++++----
+ 18 files changed, 260 insertions(+), 27 deletions(-)
+
+diff --git a/content/base/src/nsFrameMessageManager.cpp b/content/base/src/nsFrameMessageManager.cpp
+index 4c1bcb5..7b33ec0 100644
+--- a/content/base/src/nsFrameMessageManager.cpp
++++ b/content/base/src/nsFrameMessageManager.cpp
+@@ -1423,6 +1423,15 @@ nsFrameScriptExecutor::TryCacheLoadAndCompileScript(const nsAString& aURL,
+       options.setNoScriptRval(true)
+              .setFileAndLine(url.get(), 1)
+              .setPrincipals(nsJSPrincipals::get(mPrincipal));
++      if (nsScriptLoader::IsURILocal(uri)) {
++          options.setSourcePolicy(JS::CompileOptions::LOCAL_SOURCE);
++      }
++      nsAutoString charset;
++      nsScriptLoader::GuessCharset(channel, EmptyString(), nullptr, charset);
++      if (!charset.IsVoid()) {
++          options.setFileEncoding(charset.get());
++      }
++
+       JS::Rooted<JSScript*> script(cx,
+         JS::Compile(cx, JS::NullPtr(), options, dataString.get(),
+                     dataString.Length()));
+diff --git a/content/base/src/nsScriptLoader.cpp b/content/base/src/nsScriptLoader.cpp
+index e3f8c94..499a69d 100644
+--- a/content/base/src/nsScriptLoader.cpp
++++ b/content/base/src/nsScriptLoader.cpp
+@@ -42,6 +42,7 @@
+ #include "nsChannelPolicy.h"
+ #include "nsCRT.h"
+ #include "nsContentCreatorFunctions.h"
++#include "nsXULAppAPI.h"
+ #include "mozilla/dom/Element.h"
+ #include "nsCrossSiteListenerProxy.h"
+ #include "nsSandboxFlags.h"
+@@ -952,6 +953,27 @@ nsScriptLoader::GetScriptContext(JSObject **aGlobal)
+   return globalObject->GetScriptContext();
+ }
+ 
++bool
++nsScriptLoader::IsURILocal(nsIURI *aURI)
++{
++  if (XRE_GetProcessType() != GeckoProcessType_Default)
++    return false;
++
++  bool scheme = false;
++  if (aURI) {
++    aURI->SchemeIs("chrome", &scheme);
++    if (!scheme)
++      aURI->SchemeIs("app", &scheme);
++    if (!scheme)
++      aURI->SchemeIs("resource", &scheme);
++    if (!scheme)
++      aURI->SchemeIs("file", &scheme);
++    if (!scheme)
++      aURI->SchemeIs("jar", &scheme);
++  }
++  return scheme;
++}
++
+ void
+ nsScriptLoader::FillCompileOptionsForRequest(nsScriptLoadRequest *aRequest,
+                                              JS::Handle<JSObject *> scopeChain,
+@@ -970,6 +992,12 @@ nsScriptLoader::FillCompileOptionsForRequest(nsScriptLoadRequest *aRequest,
+   if (aRequest->mOriginPrincipal) {
+     aOptions->setOriginPrincipals(nsJSPrincipals::get(aRequest->mOriginPrincipal));
+   }
++  if (IsURILocal(aRequest->mURI) && !aRequest->mIsInline) {
++    aOptions->setSourcePolicy(JS::CompileOptions::LOCAL_SOURCE);
++  }
++  if (!mCharset.IsVoid()) {
++    aOptions->setFileEncoding(mCharset.get());
++  }
+ }
+ 
+ nsresult
+@@ -1163,6 +1191,32 @@ DetectByteOrderMark(const unsigned char* aBytes, int32_t aLen, nsCString& oChars
+   return !oCharset.IsEmpty();
+ }
+ 
++void
++nsScriptLoader::GuessCharset(nsIChannel* aChannel,
++                             const nsAString& aHintCharset,
++                             nsIDocument* aDocument,
++                             nsString &aCharset)
++{
++  nsAutoCString csCharset;
++
++  if (aChannel &&
++      NS_SUCCEEDED(aChannel->GetContentCharset(csCharset)) &&
++      EncodingUtils::FindEncodingForLabel(csCharset, csCharset)) {
++    aCharset.AssignWithConversion(csCharset);
++    return;
++  }
++
++  if (EncodingUtils::FindEncodingForLabel(aHintCharset, csCharset)) {
++    aCharset.AssignWithConversion(csCharset);
++    return;
++  }
++
++  if (aDocument) {
++    csCharset = aDocument->GetDocumentCharacterSet();
++    aCharset.AssignWithConversion(csCharset);
++  }
++}
++
+ /* static */ nsresult
+ nsScriptLoader::ConvertToUTF16(nsIChannel* aChannel, const uint8_t* aData,
+                                uint32_t aLength, const nsAString& aHintCharset,
+@@ -1341,6 +1395,9 @@ nsScriptLoader::PrepareLoadedRequest(nsScriptLoadRequest* aRequest,
+       NS_ASSERTION(i != mPreloads.NoIndex, "Incorrect preload bookkeeping");
+       hintCharset = mPreloads[i].mCharset;
+     }
++    nsAutoString charset;
++    GuessCharset(channel, hintCharset, mDocument, charset);
++    SetCharset(charset);
+     rv = ConvertToUTF16(channel, aString, aStringLen, hintCharset, mDocument,
+                         aRequest->mScriptText);
+ 
+diff --git a/content/base/src/nsScriptLoader.h b/content/base/src/nsScriptLoader.h
+index a54009d..b66a96d 100644
+--- a/content/base/src/nsScriptLoader.h
++++ b/content/base/src/nsScriptLoader.h
+@@ -148,6 +148,31 @@ public:
+                                  nsIDocument* aDocument, nsString& aString);
+ 
+   /**
++   * Guess charset according to aChannel, aHintCharset and aDocument.
++   * @param aChannel     Channel corresponding to the data. May be null.
++   * @param aHintCharset Hint for the character set (e.g., from a charset
++   *                     attribute). May be the empty string.
++   * @param aDocument    Document which the data is loaded for. Must not be
++   *                     null.
++   * @param aCharset     [out] the guessed charset.
++   */
++  static void GuessCharset(nsIChannel* aChannel,
++                           const nsAString& aHintCharset,
++                           nsIDocument* aDocument, nsString& aCharset);
++
++  nsString& GetCharset()
++  {
++    return mCharset;
++  }
++
++  void SetCharset(nsString &aCharset)
++  {
++    mCharset = aCharset;
++  }
++
++  static bool IsURILocal(nsIURI *aURI);
++
++  /**
+    * Processes any pending requests that are ready for processing.
+    */
+   void ProcessPendingRequests();
+@@ -325,6 +350,7 @@ private:
+   bool mEnabled;
+   bool mDeferEnabled;
+   bool mDocumentParsingDone;
++  nsString mCharset;
+ };
+ 
+ class nsAutoScriptLoaderDisabler
+diff --git a/content/xul/content/src/nsXULElement.cpp b/content/xul/content/src/nsXULElement.cpp
+index 03a4408..64df7ef 100644
+--- a/content/xul/content/src/nsXULElement.cpp
++++ b/content/xul/content/src/nsXULElement.cpp
+@@ -2600,6 +2600,7 @@ nsXULPrototypeScript::Compile(const PRUnichar* aText,
+                               int32_t aTextLength,
+                               nsIURI* aURI,
+                               uint32_t aLineNo,
++                              nsString charset,
+                               nsIDocument* aDocument,
+                               nsXULPrototypeDocument* aProtoDoc,
+                               nsIOffThreadScriptReceiver *aOffThreadReceiver /* = nullptr */)
+@@ -2631,8 +2632,14 @@ nsXULPrototypeScript::Compile(const PRUnichar* aText,
+     // If the script was inline, tell the JS parser to save source for
+     // Function.prototype.toSource(). If it's out of line, we retrieve the
+     // source from the files on demand.
+-    options.setSourcePolicy(mOutOfLine ? JS::CompileOptions::LAZY_SOURCE
+-                                       : JS::CompileOptions::SAVE_SOURCE);
++    // Is the IsURILocal() check redundent?
++    bool isURILocal = nsScriptLoader::IsURILocal(aURI);
++    if (mOutOfLine) {
++        if (!charset.IsVoid())
++            options.setFileEncoding(charset.get());
++        options.setSourcePolicy(isURILocal ? JS::CompileOptions::LOCAL_SOURCE
++                                           : JS::CompileOptions::LAZY_SOURCE);
++    }
+     JS::Rooted<JSObject*> scope(cx, JS::CurrentGlobalOrNull(cx));
+     if (scope) {
+       JS::ExposeObjectToActiveJS(scope);
+diff --git a/content/xul/content/src/nsXULElement.h b/content/xul/content/src/nsXULElement.h
+index c74bbaf..a7856ed 100644
+--- a/content/xul/content/src/nsXULElement.h
++++ b/content/xul/content/src/nsXULElement.h
+@@ -230,7 +230,7 @@ public:
+                                   nsXULPrototypeDocument* aProtoDoc);
+ 
+     nsresult Compile(const PRUnichar* aText, int32_t aTextLength,
+-                     nsIURI* aURI, uint32_t aLineNo,
++                     nsIURI* aURI, uint32_t aLineNo, nsString charset,
+                      nsIDocument* aDocument,
+                      nsXULPrototypeDocument* aProtoDoc,
+                      nsIOffThreadScriptReceiver *aOffThreadReceiver = nullptr);
+diff --git a/content/xul/document/src/XULDocument.cpp b/content/xul/document/src/XULDocument.cpp
+index b227de0..f517bab 100644
+--- a/content/xul/document/src/XULDocument.cpp
++++ b/content/xul/document/src/XULDocument.cpp
+@@ -3532,12 +3532,14 @@ XULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
+         MOZ_ASSERT(!mOffThreadCompiling && mOffThreadCompileString.Length() == 0,
+                    "XULDocument can't load multiple scripts at once");
+ 
++        nsAutoString charset;
++        nsScriptLoader::GuessCharset(channel, EmptyString(), this, charset);
+         rv = nsScriptLoader::ConvertToUTF16(channel, string, stringLen,
+                                             EmptyString(), this, mOffThreadCompileString);
+         if (NS_SUCCEEDED(rv)) {
+             rv = mCurrentScriptProto->Compile(mOffThreadCompileString.get(),
+                                               mOffThreadCompileString.Length(),
+-                                              uri, 1, this,
++                                              uri, 1, charset, this,
+                                               mCurrentPrototype,
+                                               this);
+             if (NS_SUCCEEDED(rv) && !mCurrentScriptProto->GetScriptObject()) {
+diff --git a/content/xul/document/src/nsXULContentSink.cpp b/content/xul/document/src/nsXULContentSink.cpp
+index adca134..19957ff 100644
+--- a/content/xul/document/src/nsXULContentSink.cpp
++++ b/content/xul/document/src/nsXULContentSink.cpp
+@@ -566,7 +566,7 @@ XULContentSinkImpl::HandleEndElement(const PRUnichar *aName)
+             script->mOutOfLine = false;
+             if (doc)
+                 script->Compile(mText, mTextLength, mDocumentURL,
+-                                script->mLineNo, doc, mPrototype);
++                                script->mLineNo, EmptyString(), doc, mPrototype);
+         }
+ 
+         FlushText(false);
+diff --git a/dom/workers/ScriptLoader.cpp b/dom/workers/ScriptLoader.cpp
+index edee86a..c5a1c51 100644
+--- a/dom/workers/ScriptLoader.cpp
++++ b/dom/workers/ScriptLoader.cpp
+@@ -731,6 +731,7 @@ ScriptExecutorRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+     JS::CompileOptions options(aCx);
+     options.setPrincipals(principal)
+            .setFileAndLine(filename.get(), 1);
++    options.setSourcePolicy(JS::CompileOptions::NO_SOURCE);
+     if (!JS::Evaluate(aCx, global, options, loadInfo.mScriptText.get(),
+                       loadInfo.mScriptText.Length(), nullptr)) {
+       return true;
+diff --git a/js/src/frontend/BytecodeCompiler.cpp b/js/src/frontend/BytecodeCompiler.cpp
+index 353f220..50d05bd 100644
+--- a/js/src/frontend/BytecodeCompiler.cpp
++++ b/js/src/frontend/BytecodeCompiler.cpp
+@@ -141,7 +141,8 @@ CanLazilyParse(ExclusiveContext *cx, const ReadOnlyCompileOptions &options)
+ {
+     return options.canLazilyParse &&
+         options.compileAndGo &&
+-        options.sourcePolicy == CompileOptions::SAVE_SOURCE &&
++        (options.sourcePolicy == CompileOptions::SAVE_SOURCE ||
++         options.sourcePolicy == CompileOptions::LOCAL_SOURCE) &&
+         !(cx->compartment()->debugMode() &&
+           cx->compartment()->runtimeFromAnyThread()->debugHooks.newScriptHook);
+ }
+@@ -198,6 +199,8 @@ frontend::CompileScript(ExclusiveContext *cx, LifoAlloc *alloc, HandleObject sco
+         return nullptr;
+     if (options.filename() && !ss->setFilename(cx, options.filename()))
+         return nullptr;
++    if (options.fileEncoding() && !ss->setFileEncoding(cx, options.fileEncoding()))
++        return nullptr;
+ 
+     RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss, options));
+     if (!sourceObject)
+@@ -211,6 +214,12 @@ frontend::CompileScript(ExclusiveContext *cx, LifoAlloc *alloc, HandleObject sco
+         if (!ss->setSourceCopy(cx, chars, length, false, sct))
+             return nullptr;
+         break;
++      case CompileOptions::LOCAL_SOURCE:
++        ss->setSourceAlwaysRetrievable();
++#ifdef DEBUG
++        ss->updateSourceChecksum(chars, length);
++#endif
++        break;
+       case CompileOptions::LAZY_SOURCE:
+         ss->setSourceRetrievable();
+         break;
+@@ -495,6 +504,8 @@ CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, const ReadOnlyComp
+         return false;
+     if (options.filename() && !ss->setFilename(cx, options.filename()))
+         return false;
++    if (options.fileEncoding() && !ss->setFileEncoding(cx, options.fileEncoding()))
++        return nullptr;
+     RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss, options));
+     if (!sourceObject)
+         return false;
+@@ -505,6 +516,13 @@ CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, const ReadOnlyComp
+             return false;
+     }
+ 
++    if (options.sourcePolicy == CompileOptions::LOCAL_SOURCE) {
++        ss->setSourceAlwaysRetrievable();
++#ifdef DEBUG
++        ss->updateSourceChecksum(chars, length);
++#endif
++    }
++
+     bool canLazilyParse = CanLazilyParse(cx, options);
+ 
+     Maybe<Parser<SyntaxParseHandler> > syntaxParser;
+diff --git a/js/src/jsapi.cpp b/js/src/jsapi.cpp
+index 93ad2c1..0c0242a 100644
+--- a/js/src/jsapi.cpp
++++ b/js/src/jsapi.cpp
+@@ -4373,6 +4373,7 @@ JS::OwningCompileOptions::~OwningCompileOptions()
+ 
+     // OwningCompileOptions always owns these, so these casts are okay.
+     js_free(const_cast<char *>(filename_));
++    js_free(const_cast<jschar *>(fileEncoding_));
+     js_free(const_cast<jschar *>(sourceMapURL_));
+ }
+ 
+@@ -4386,6 +4387,7 @@ JS::OwningCompileOptions::copy(JSContext *cx, const ReadOnlyCompileOptions &rhs)
+     setElement(rhs.element());
+ 
+     return (setFileAndLine(cx, rhs.filename(), rhs.lineno) &&
++            setFileEncoding(cx, rhs.fileEncoding()) &&
+             setSourceMapURL(cx, rhs.sourceMapURL()));
+ }
+ 
+@@ -4408,6 +4410,23 @@ JS::OwningCompileOptions::setFileAndLine(JSContext *cx, const char *f, unsigned
+ }
+ 
+ bool
++JS::OwningCompileOptions::setFileEncoding(JSContext *cx, const jschar *encoding)
++{
++    jschar *copy = nullptr;
++    if (encoding) {
++        copy = js_strdup(cx, encoding);
++        if (!copy)
++            return false;
++    }
++
++    // OwningCompileOptions always owns fileEncoding_, so this cast is okay.
++    js_free(const_cast<jschar *>(fileEncoding_));
++
++    fileEncoding_ = copy;
++    return true;
++}
++
++bool
+ JS::OwningCompileOptions::setSourceMapURL(JSContext *cx, const jschar *s)
+ {
+     jschar *copy = nullptr;
+diff --git a/js/src/jsapi.h b/js/src/jsapi.h
+index 101d469..faee6e6 100644
+--- a/js/src/jsapi.h
++++ b/js/src/jsapi.h
+@@ -3407,6 +3407,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+     JSPrincipals *principals_;
+     JSPrincipals *originPrincipals_;
+     const char *filename_;
++    const jschar *fileEncoding_;
+     const jschar *sourceMapURL_;
+ 
+     // This constructor leaves 'version' set to JSVERSION_UNKNOWN. The structure
+@@ -3417,6 +3418,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+       : principals_(nullptr),
+         originPrincipals_(nullptr),
+         filename_(nullptr),
++        fileEncoding_(nullptr),
+         sourceMapURL_(nullptr),
+         version(JSVERSION_UNKNOWN),
+         versionSet(false),
+@@ -3445,6 +3447,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+     JSPrincipals *principals() const { return principals_; }
+     JSPrincipals *originPrincipals() const;
+     const char *filename() const { return filename_; }
++    const jschar *fileEncoding() const { return fileEncoding_; }
+     const jschar *sourceMapURL() const { return sourceMapURL_; }
+     virtual JSObject *element() const = 0;
+     virtual JSString *elementProperty() const = 0;
+@@ -3467,7 +3470,8 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+     enum SourcePolicy {
+         NO_SOURCE,
+         LAZY_SOURCE,
+-        SAVE_SOURCE
++        SAVE_SOURCE,
++        LOCAL_SOURCE // NOT a snippet/fragment. Can be loaded and parsed lazily.
+     } sourcePolicy;
+ 
+   private:
+@@ -3510,6 +3514,7 @@ class JS_PUBLIC_API(OwningCompileOptions) : public ReadOnlyCompileOptions
+ 
+     /* These setters make copies of their string arguments, and are fallible. */
+     bool setFileAndLine(JSContext *cx, const char *f, unsigned l);
++    bool setFileEncoding(JSContext *cx, const jschar *encoding);
+     bool setSourceMapURL(JSContext *cx, const jschar *s);
+ 
+     /* These setters are infallible, and can be chained. */
+@@ -3564,6 +3569,7 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(CompileOptions) : public ReadOnlyCompileOpti
+         principals_ = rhs.principals();
+         originPrincipals_ = rhs.originPrincipals();
+         filename_ = rhs.filename();
++        fileEncoding_ = rhs.fileEncoding();
+         sourceMapURL_ = rhs.sourceMapURL();
+         elementRoot = rhs.element();
+         elementPropertyRoot = rhs.elementProperty();
+@@ -3575,6 +3581,9 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(CompileOptions) : public ReadOnlyCompileOpti
+     CompileOptions &setFileAndLine(const char *f, unsigned l) {
+         filename_ = f; lineno = l; return *this;
+     }
++    CompileOptions &setFileEncoding(const jschar *encoding) {
++        fileEncoding_ = encoding; return *this;
++    }
+     CompileOptions &setSourceMapURL(const jschar *s) { sourceMapURL_ = s;       return *this; }
+     CompileOptions &setElement(JSObject *e)          { elementRoot = e;         return *this; }
+     CompileOptions &setElementProperty(JSString *p)  { elementPropertyRoot = p; return *this; }
+diff --git a/js/src/jsfriendapi.h b/js/src/jsfriendapi.h
+index eb05652..e3bcdc6 100644
+--- a/js/src/jsfriendapi.h
++++ b/js/src/jsfriendapi.h
+@@ -245,7 +245,8 @@ class SourceHook {
+      * On success, the caller owns the buffer to which |*src| points, and
+      * should use JS_free to free it.
+      */
+-    virtual bool load(JSContext *cx, const char *filename, jschar **src, size_t *length) = 0;
++    virtual bool load(JSContext *cx, const char *filename, const jschar *encoding, jschar **src,
++                      size_t *length) = 0;
+ };
+ 
+ /*
+diff --git a/js/src/jsscript.cpp b/js/src/jsscript.cpp
+index 5fa6e3e..2408067 100644
+--- a/js/src/jsscript.cpp
++++ b/js/src/jsscript.cpp
+@@ -1048,7 +1048,7 @@ JSScript::loadSource(JSContext *cx, ScriptSource *ss, bool *worked)
+         return true;
+     jschar *src = nullptr;
+     size_t length;
+-    if (!cx->runtime()->sourceHook->load(cx, ss->filename(), &src, &length))
++    if (!cx->runtime()->sourceHook->load(cx, ss->filename(), ss->fileEncoding(), &src, &length))
+         return false;
+     if (!src)
+         return true;
+@@ -1155,9 +1155,39 @@ ScriptSource::chars(JSContext *cx, const SourceDataCache::AutoSuppressPurge &asp
+         return decompressed;
+     }
+ #endif
++    if (!data.source && sourceAlwaysRetrievable_) {
++        if (const jschar *cached = cx->runtime()->sourceDataCache.lookup(this, asp))
++            return cached;
++
++        JS_ASSERT(cx->runtime()->sourceHook);
++        jschar *src = NULL;
++        size_t length;
++        bool loaded = cx->runtime()->sourceHook->load(cx, this->filename(), this->fileEncoding(),
++                                                      &src, &length);
++        JS_ASSERT(loaded);
++        if (!src) {
++            JS_ReportOutOfMemory(cx);
++            return nullptr;
++        }
++        JS_ASSERT(sourceChecksum == crc32(0, (const Bytef *)src, length * sizeof(jschar)));
++        if (!cx->runtime()->sourceDataCache.put(this, src, asp)) {
++            JS_ReportOutOfMemory(cx);
++            js_free(src);
++            return nullptr;
++        }
++        return src;
++    }
+     return data.source;
+ }
+ 
++#ifdef DEBUG
++void
++ScriptSource::updateSourceChecksum(const jschar *buf, size_t len)
++{
++    sourceChecksum = crc32(0, (const Bytef *)buf, len * sizeof(jschar));
++}
++#endif
++
+ JSStableString *
+ ScriptSource::substring(JSContext *cx, uint32_t start, uint32_t stop)
+ {
+@@ -1290,6 +1320,7 @@ ScriptSource::destroy()
+     JS_ASSERT(ready());
+     adjustDataSize(0);
+     js_free(filename_);
++    js_free(fileEncoding_);
+     js_free(sourceURL_);
+     js_free(sourceMapURL_);
+     if (originPrincipals_)
+@@ -1439,6 +1470,16 @@ ScriptSource::setFilename(ExclusiveContext *cx, const char *filename)
+ }
+ 
+ bool
++ScriptSource::setFileEncoding(ExclusiveContext *cx, const jschar *encoding)
++{
++    size_t len = js_strlen(encoding) + 1;
++    if (len == 1)
++        return true;
++    fileEncoding_ = js_strdup(cx, encoding);
++    return !!fileEncoding_;
++}
++
++bool
+ ScriptSource::setSourceURL(ExclusiveContext *cx, const jschar *sourceURL)
+ {
+     JS_ASSERT(sourceURL);
+diff --git a/js/src/jsscript.h b/js/src/jsscript.h
+index 0f621b9..e76f684 100644
+--- a/js/src/jsscript.h
++++ b/js/src/jsscript.h
+@@ -347,6 +347,10 @@ class ScriptSource
+     uint32_t length_;
+     uint32_t compressedLength_;
+     char *filename_;
++#ifdef DEBUG
++    uint64_t sourceChecksum;
++#endif
++    jschar *fileEncoding_;
+     jschar *sourceURL_;
+     jschar *sourceMapURL_;
+     JSPrincipals *originPrincipals_;
+@@ -355,6 +359,7 @@ class ScriptSource
+     // demand. If sourceRetrievable_ and hasSourceData() are false, it is not
+     // possible to get source at all.
+     bool sourceRetrievable_:1;
++    bool sourceAlwaysRetrievable_:1;
+     bool argumentsNotIncluded_:1;
+     bool ready_:1;
+ 
+@@ -364,10 +369,12 @@ class ScriptSource
+         length_(0),
+         compressedLength_(0),
+         filename_(nullptr),
++        fileEncoding_(nullptr),
+         sourceURL_(nullptr),
+         sourceMapURL_(nullptr),
+         originPrincipals_(originPrincipals),
+         sourceRetrievable_(false),
++        sourceAlwaysRetrievable_(false),
+         argumentsNotIncluded_(false),
+         ready_(true)
+     {
+@@ -381,6 +388,9 @@ class ScriptSource
+         if (--refs == 0)
+             destroy();
+     }
++#ifdef DEBUG
++    void updateSourceChecksum(const jschar *buf, size_t len);
++#endif
+     bool setSourceCopy(ExclusiveContext *cx,
+                        const jschar *src,
+                        uint32_t length,
+@@ -389,8 +399,9 @@ class ScriptSource
+     void setSource(const jschar *src, size_t length);
+     bool ready() const { return ready_; }
+     void setSourceRetrievable() { sourceRetrievable_ = true; }
++    void setSourceAlwaysRetrievable() { sourceAlwaysRetrievable_ = sourceRetrievable_ = true; }
+     bool sourceRetrievable() const { return sourceRetrievable_; }
+-    bool hasSourceData() const { return !!data.source || !ready(); }
++    bool hasSourceData() const { return !!data.source || !ready() || sourceAlwaysRetrievable_;}
+     uint32_t length() const {
+         JS_ASSERT(hasSourceData());
+         return length_;
+@@ -412,6 +423,11 @@ class ScriptSource
+         return filename_;
+     }
+ 
++    bool setFileEncoding(ExclusiveContext *cx, const jschar *encoding);
++    const jschar *fileEncoding() const {
++        return fileEncoding_;
++    }
++
+     // Source URLs
+     bool setSourceURL(ExclusiveContext *cx, const jschar *sourceURL);
+     const jschar *sourceURL();
+diff --git a/js/src/shell/js.cpp b/js/src/shell/js.cpp
+index bfc2548..23c309c 100644
+--- a/js/src/shell/js.cpp
++++ b/js/src/shell/js.cpp
+@@ -3897,7 +3897,9 @@ class ShellSourceHook: public SourceHook {
+             JS_RemoveObjectRootRT(rt, &fun);
+     }
+ 
+-    bool load(JSContext *cx, const char *filename, jschar **src, size_t *length) {
++    bool load(JSContext *cx, const char *filename, const jschar *fileEncoding, jschar **src,
++              size_t *length)
++    {
+         JS_ASSERT(fun);
+ 
+         RootedString str(cx, JS_NewStringCopyZ(cx, filename));
+diff --git a/js/xpconnect/loader/mozJSComponentLoader.cpp b/js/xpconnect/loader/mozJSComponentLoader.cpp
+index df7e96e..86d09a7 100644
+--- a/js/xpconnect/loader/mozJSComponentLoader.cpp
++++ b/js/xpconnect/loader/mozJSComponentLoader.cpp
+@@ -26,6 +26,7 @@
+ #include "nsIComponentManager.h"
+ #include "mozilla/Module.h"
+ #include "nsIFile.h"
++#include "nsScriptLoader.h"
+ #include "mozJSComponentLoader.h"
+ #include "mozJSLoaderUtils.h"
+ #include "nsIJSRuntimeService.h"
+@@ -779,10 +780,15 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
+         options.setPrincipals(nsJSPrincipals::get(mSystemPrincipal))
+                .setNoScriptRval(mReuseLoaderGlobal ? false : true)
+                .setVersion(JSVERSION_LATEST)
+-               .setFileAndLine(nativePath.get(), 1)
+-               .setSourcePolicy(mReuseLoaderGlobal ?
+-                                CompileOptions::NO_SOURCE :
+-                                CompileOptions::LAZY_SOURCE);
++               .setFileAndLine(nativePath.get(), 1);
++
++        if (nsScriptLoader::IsURILocal(aURI)) {
++            options.setSourcePolicy(JS::CompileOptions::LOCAL_SOURCE);
++        } else {
++            options.setSourcePolicy(mReuseLoaderGlobal ?
++                                    CompileOptions::NO_SOURCE :
++                                    CompileOptions::LAZY_SOURCE);
++        }
+ 
+         if (realFile) {
+ #ifdef HAVE_PR_MEMMAP
+diff --git a/js/xpconnect/loader/mozJSSubScriptLoader.cpp b/js/xpconnect/loader/mozJSSubScriptLoader.cpp
+index ce348e7..a99f671 100644
+--- a/js/xpconnect/loader/mozJSSubScriptLoader.cpp
++++ b/js/xpconnect/loader/mozJSSubScriptLoader.cpp
+@@ -91,6 +91,8 @@ ReportError(JSContext *cx, const char *msg)
+     return NS_OK;
+ }
+ 
++/* LOCAL_SOURCE and LAZY_SOURCE require that the script files are compiled as a
++   whole. No script fragments are allowed. */
+ nsresult
+ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *targetObjArg,
+                                  const nsAString& charset, const char *uriStr,
+@@ -144,10 +146,21 @@ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *targetObj
+     JS::CompileOptions options(cx);
+     options.setPrincipals(nsJSPrincipals::get(principal))
+            .setFileAndLine(uriStr, 1);
++    bool isURILocal = nsScriptLoader::IsURILocal(uri);
++    if (!reuseGlobal) {
++        options.setSourcePolicy(isURILocal ? JS::CompileOptions::LOCAL_SOURCE
++                                       : JS::CompileOptions::LAZY_SOURCE);
++    } else {
++        if (isURILocal)
++            options.setSourcePolicy(JS::CompileOptions::LOCAL_SOURCE);
++    }
++
+     if (!charset.IsVoid()) {
+         nsString script;
+         rv = nsScriptLoader::ConvertToUTF16(nullptr, reinterpret_cast<const uint8_t*>(buf.get()), len,
+                                             charset, nullptr, script);
++        nsAutoString encoding(charset);
++        options.setFileEncoding(encoding.get());
+ 
+         if (NS_FAILED(rv)) {
+             return ReportError(cx, LOAD_ERROR_BADCHARSET);
+@@ -164,10 +177,7 @@ mozJSSubScriptLoader::ReadScript(nsIURI *uri, JSContext *cx, JSObject *targetObj
+                                              script.Length());
+         }
+     } else {
+-        // We only use LAZY_SOURCE when no special encoding is specified because
+-        // the lazy source loader doesn't know the encoding.
+         if (!reuseGlobal) {
+-            options.setSourcePolicy(JS::CompileOptions::LAZY_SOURCE);
+             *scriptp = JS::Compile(cx, target_obj, options, buf.get(), len);
+         } else {
+             *functionp = JS::CompileFunction(cx, target_obj, options,
+diff --git a/js/xpconnect/src/XPCJSRuntime.cpp b/js/xpconnect/src/XPCJSRuntime.cpp
+index 8a5af9b..06a84f5 100644
+--- a/js/xpconnect/src/XPCJSRuntime.cpp
++++ b/js/xpconnect/src/XPCJSRuntime.cpp
+@@ -2838,7 +2838,8 @@ PreserveWrapper(JSContext *cx, JSObject *obj)
+ }
+ 
+ static nsresult
+-ReadSourceFromFilename(JSContext *cx, const char *filename, jschar **src, size_t *len)
++ReadSourceFromFilename(JSContext *cx, const char *filename, const jschar *encoding, jschar **src,
++                       size_t *len)
+ {
+     nsresult rv;
+ 
+@@ -2864,8 +2865,12 @@ ReadSourceFromFilename(JSContext *cx, const char *filename, jschar **src, size_t
+     nsCString scheme;
+     rv = actualUri->GetScheme(scheme);
+     NS_ENSURE_SUCCESS(rv, rv);
+-    if (!scheme.EqualsLiteral("file") && !scheme.EqualsLiteral("jar"))
++    if (!scheme.EqualsLiteral("file") && !scheme.EqualsLiteral("jar") &&
++        !scheme.EqualsLiteral("app") && !scheme.EqualsLiteral("chrome") &&
++        !scheme.EqualsLiteral("resource"))
++    {
+         return NS_OK;
++    }
+ 
+     nsCOMPtr<nsIInputStream> scriptStream;
+     rv = scriptChannel->Open(getter_AddRefs(scriptStream));
+@@ -2899,16 +2904,18 @@ ReadSourceFromFilename(JSContext *cx, const char *filename, jschar **src, size_t
+     }
+ 
+     nsString decoded;
+-    rv = nsScriptLoader::ConvertToUTF16(scriptChannel, buf, rawLen, EmptyString(),
++    nsAutoString charsetHint(encoding);
++    rv = nsScriptLoader::ConvertToUTF16(scriptChannel, buf, rawLen, charsetHint,
+                                         nullptr, decoded);
+     NS_ENSURE_SUCCESS(rv, rv);
+ 
+     // Copy to JS engine.
+     *len = decoded.Length();
+-    *src = static_cast<jschar *>(JS_malloc(cx, decoded.Length()*sizeof(jschar)));
++    *src = static_cast<jschar *>(JS_malloc(cx, (decoded.Length() + 1)*sizeof(jschar)));
+     if (!*src)
+         return NS_ERROR_FAILURE;
+     memcpy(*src, decoded.get(), decoded.Length()*sizeof(jschar));
++    (*src)[*len] = 0;
+ 
+     return NS_OK;
+ }
+@@ -2917,17 +2924,19 @@ ReadSourceFromFilename(JSContext *cx, const char *filename, jschar **src, size_t
+ // the source for a chrome JS function. See the comment in the XPCJSRuntime
+ // constructor.
+ class XPCJSSourceHook: public js::SourceHook {
+-    bool load(JSContext *cx, const char *filename, jschar **src, size_t *length) {
++    bool load(JSContext *cx, const char *filename, const jschar *encoding, jschar **src,
++              size_t *length)
++    {
+         *src = nullptr;
+         *length = 0;
+ 
+-        if (!nsContentUtils::IsCallerChrome())
+-            return true;
+-
+         if (!filename)
+             return true;
+ 
+-        nsresult rv = ReadSourceFromFilename(cx, filename, src, length);
++        if (XRE_GetProcessType() != GeckoProcessType_Default)
++            return false;
++
++        nsresult rv = ReadSourceFromFilename(cx, filename, encoding, src, length);
+         if (NS_FAILED(rv)) {
+             xpc::Throw(cx, rv);
+             return false;
+-- 
+1.7.9.5
+
