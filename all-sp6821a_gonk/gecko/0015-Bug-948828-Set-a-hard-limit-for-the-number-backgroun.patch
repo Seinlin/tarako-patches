@@ -1,0 +1,77 @@
+From b147bf076fdb222d6d906d9a3c69c321e4e488c2 Mon Sep 17 00:00:00 2001
+From: Kai-Zhen Li <kli@mozilla.com>
+Date: Wed, 22 Jan 2014 19:18:15 +0800
+Subject: [PATCH] Bug 948828 - Set a hard limit for the number background
+ processes
+
+---
+ b2g/app/b2g.js                     |    7 ++++++-
+ dom/ipc/ProcessPriorityManager.cpp |   20 ++++++++++++++++++++
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/b2g/app/b2g.js b/b2g/app/b2g.js
+index 3a9b839..b06f4bae 100644
+--- a/b2g/app/b2g.js
++++ b/b2g/app/b2g.js
+@@ -619,7 +619,12 @@ pref("dom.ipc.processPriorityManager.temporaryPriorityLockMS", 5000);
+ // Number of different background levels for background processes.  We use
+ // these different levels to force the low-memory killer to kill processes in
+ // a LRU order.
+-pref("dom.ipc.processPriorityManager.backgroundLRUPoolLevels", 5);
++pref("dom.ipc.processPriorityManager.backgroundLRUPoolLevels", 2);
++
++// Enable Out Of Background Process killer.
++// Number of background process would have a hard limit according to the
++// calculation result from backgroundLRUPoolLevels argument.
++pref("hal.processPriorityManager.gonk.enableOOBPKiller", true);
+ 
+ // Kernel parameters for process priorities.  These affect how processes are
+ // killed on low-memory and their relative CPU priorities.
+diff --git a/dom/ipc/ProcessPriorityManager.cpp b/dom/ipc/ProcessPriorityManager.cpp
+index dcd1de8..9b50c4f 100644
+--- a/dom/ipc/ProcessPriorityManager.cpp
++++ b/dom/ipc/ProcessPriorityManager.cpp
+@@ -318,6 +318,7 @@ public:
+ private:
+   static StaticAutoPtr<BackgroundProcessLRUPool> sSingleton;
+ 
++  bool mEnableOOBPKiller;
+   int32_t mLRUPoolLevels;
+   int32_t mLRUPoolSize;
+   int32_t mLRUPoolAvailableIndex;
+@@ -1258,6 +1259,17 @@ BackgroundProcessLRUPool::EnsureLRUPool()
+   LOG("Making background LRU pool with size(%d)", mLRUPoolSize);
+ 
+   mLRUPool.InsertElementsAt(0, mLRUPoolSize, (ContentParent*)nullptr);
++
++  // We set mEnableOOBPKiller according to our pref.
++  // If this value is true, we will call ContentParent-<KillHard() to kill
++  // background process in LRU order if we hit the background LRU pool's limit.
++  if (!NS_SUCCEEDED(Preferences::GetBool(
++        "hal.processPriorityManager.gonk.enableOOBPKiller",
++        &mEnableOOBPKiller))) {
++    mEnableOOBPKiller = false;
++  }
++  LOG("Out of background process killer is %s",
++      mEnableOOBPKiller ? "enabled" : "disabled");
+ }
+ 
+ void
+@@ -1325,6 +1337,14 @@ BackgroundProcessLRUPool::UpdateAvailableIndexInLRUPool(
+     }
+   }
+ 
++  // Kill background process in LRU order if we run out of background LRU pool
++  // vacancy
++  if (mEnableOOBPKiller && mLRUPoolAvailableIndex == -1) {
++    LOG("Out of background process, killing ChildID(%llu)",
++        mLRUPool[mLRUPoolSize - 1]->ChildID());
++    mLRUPool[mLRUPoolSize - 1]->KillHard();
++  }
++
+   // If the LRUPool is already full, mLRUPoolAvailableIndex is still -1 after
+   // above loop finished. We should set mLRUPoolAvailableIndex
+   // to mLRUPoolSize - 1 in this case. Here uses the mod operator to do it:
+-- 
+1.7.9.5
+
