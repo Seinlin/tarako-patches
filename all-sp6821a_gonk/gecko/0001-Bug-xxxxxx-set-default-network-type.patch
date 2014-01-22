@@ -1,0 +1,25 @@
+From 34570dd9a6652d6d91a317000e14cad77898179c Mon Sep 17 00:00:00 2001
+From: Kai-Zhen Li <kli@mozilla.com>
+Date: Wed, 22 Jan 2014 18:18:33 +0800
+Subject: [PATCH] Bug xxxxxx - set default network type.
+
+---
+ dom/system/gonk/ril_consts.js |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dom/system/gonk/ril_consts.js b/dom/system/gonk/ril_consts.js
+index 68f3e8f..09080df 100644
+--- a/dom/system/gonk/ril_consts.js
++++ b/dom/system/gonk/ril_consts.js
+@@ -412,7 +412,7 @@ this.GECKO_PREFERRED_NETWORK_TYPE_CDMA_EVDO = "cdma/evdo";
+ this.GECKO_PREFERRED_NETWORK_TYPE_CDMA_ONLY = "cdma";
+ this.GECKO_PREFERRED_NETWORK_TYPE_EVDO_ONLY = "evdo";
+ this.GECKO_PREFERRED_NETWORK_TYPE_WCDMA_GSM_CDMA_EVDO = "wcdma/gsm/cdma/evdo";
+-this.GECKO_PREFERRED_NETWORK_TYPE_DEFAULT = GECKO_PREFERRED_NETWORK_TYPE_WCDMA_GSM;
++this.GECKO_PREFERRED_NETWORK_TYPE_DEFAULT = GECKO_PREFERRED_NETWORK_TYPE_GSM_ONLY;
+ this.RIL_PREFERRED_NETWORK_TYPE_TO_GECKO = [
+   GECKO_PREFERRED_NETWORK_TYPE_WCDMA_GSM,
+   GECKO_PREFERRED_NETWORK_TYPE_GSM_ONLY,
+-- 
+1.7.9.5
+
