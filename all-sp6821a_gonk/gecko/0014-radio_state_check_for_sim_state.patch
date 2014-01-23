@@ -1,0 +1,15 @@
+diff --git a/dom/system/gonk/ril_worker.js b/dom/system/gonk/ril_worker.js
+index bfb0fb8..8565913 100644
+--- a/dom/system/gonk/ril_worker.js
++++ b/dom/system/gonk/ril_worker.js
+@@ -3015,6 +3015,10 @@ let RIL = {
+       newCardState = GECKO_CARDSTATE_PERMANENT_BLOCKED;
+     }
+ 
++    if (this.radioState !== GECKO_RADIOSTATE_READY) {
++      return;
++    }
++
+     if (this.cardState == newCardState) {
+       return;
+     }
