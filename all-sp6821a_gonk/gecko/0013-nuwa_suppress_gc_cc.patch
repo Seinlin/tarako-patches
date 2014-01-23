@@ -1,0 +1,212 @@
+# HG changeset patch
+# Parent dcd173ba0b7b50d4568155551186fbb65c74c92c
+# User Cervantes Yu <cyu@mozilla.com>
+Suppress GC and CC in the Nuwa process after the threads are frozen.
+
+diff --git a/dom/base/nsJSEnvironment.cpp b/dom/base/nsJSEnvironment.cpp
+--- a/dom/base/nsJSEnvironment.cpp
++++ b/dom/base/nsJSEnvironment.cpp
+@@ -152,16 +152,19 @@ static const uint32_t kMaxICCDuration = 
+ 
+ static nsITimer *sGCTimer;
+ static nsITimer *sShrinkGCBuffersTimer;
+ static nsITimer *sCCTimer;
+ static nsITimer *sICCTimer;
+ static nsITimer *sFullGCTimer;
+ static nsITimer *sInterSliceGCTimer;
+ 
++static bool sGCSuppressed = false;
++static bool sCCSuppressed = false;
++
+ static TimeStamp sLastCCEndTime;
+ 
+ static bool sCCLockedOut;
+ static PRTime sCCLockedOutTime;
+ 
+ static JS::GCSliceCallback sPrevGCSliceCallback;
+ 
+ static bool sHasRunGC;
+@@ -2496,17 +2499,17 @@ nsJSContext::LoadEnd()
+   sLoadingInProgress = false;
+   PokeGC(JS::gcreason::LOAD_END);
+ }
+ 
+ // static
+ void
+ nsJSContext::PokeGC(JS::gcreason::Reason aReason, int aDelay)
+ {
+-  if (sGCTimer || sInterSliceGCTimer || sShuttingDown) {
++  if (sGCTimer || sInterSliceGCTimer || sShuttingDown || sGCSuppressed) {
+     // There's already a timer for GC'ing, just return
+     return;
+   }
+ 
+   if (sCCTimer) {
+     // Make sure CC is called...
+     sNeedsFullCC = true;
+     // and GC after it.
+@@ -2553,17 +2556,17 @@ nsJSContext::PokeShrinkGCBuffers()
+                                               NS_SHRINK_GC_BUFFERS_DELAY,
+                                               nsITimer::TYPE_ONE_SHOT);
+ }
+ 
+ // static
+ void
+ nsJSContext::MaybePokeCC()
+ {
+-  if (sCCTimer || sICCTimer || sShuttingDown || !sHasRunGC) {
++  if (sCCTimer || sICCTimer || sShuttingDown || !sHasRunGC || sCCSuppressed) {
+     return;
+   }
+ 
+   if (ShouldTriggerCC(nsCycleCollector_suspectedCount())) {
+     sCCTimerFireCount = 0;
+     CallCreateInstance("@mozilla.org/timer;1", &sCCTimer);
+     if (!sCCTimer) {
+       return;
+@@ -2638,16 +2641,30 @@ nsJSContext::KillICCTimer()
+ 
+   if (sICCTimer) {
+     sICCTimer->Cancel();
+ 
+     NS_RELEASE(sICCTimer);
+   }
+ }
+ 
++// static
++void
++nsJSContext::SetGCSuppressed(bool aSuppressed)
++{
++  sGCSuppressed = aSuppressed;
++}
++
++// static
++void
++nsJSContext::SetCCSuppressed(bool aSuppressed)
++{
++  sCCSuppressed = aSuppressed;
++}
++
+ void
+ nsJSContext::GC(JS::gcreason::Reason aReason)
+ {
+   PokeGC(aReason);
+ }
+ 
+ class NotifyGCEndRunnable : public nsRunnable
+ {
+diff --git a/dom/base/nsJSEnvironment.h b/dom/base/nsJSEnvironment.h
+--- a/dom/base/nsJSEnvironment.h
++++ b/dom/base/nsJSEnvironment.h
+@@ -122,16 +122,19 @@ public:
+   static void KillShrinkGCBuffersTimer();
+ 
+   static void MaybePokeCC();
+   static void KillCCTimer();
+   static void KillICCTimer();
+   static void KillFullGCTimer();
+   static void KillInterSliceGCTimer();
+ 
++  static void SetGCSuppressed(bool sSuppressed);
++  static void SetCCSuppressed(bool sSuppressed);
++
+   // Calling LikelyShortLivingObjectCreated() makes a GC more likely.
+   static void LikelyShortLivingObjectCreated();
+ 
+   virtual void GC(JS::gcreason::Reason aReason) MOZ_OVERRIDE;
+ 
+   static uint32_t CleanupsSinceLastGC();
+ 
+   nsIScriptGlobalObject* GetCachedGlobalObject()
+diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
+--- a/dom/ipc/ContentChild.cpp
++++ b/dom/ipc/ContentChild.cpp
+@@ -1592,16 +1592,20 @@ class CallNuwaSpawn : public nsRunnable
+ public:
+     NS_IMETHOD Run()
+     {
+         NuwaSpawn();
+         if (IsNuwaProcess()) {
+             return NS_OK;
+         }
+ 
++        // The threads are thawed. We can perform GC and CC normally.
++        nsJSContext::SetGCSuppressed(false);
++        nsJSContext::SetCCSuppressed(false);
++
+         // In the new process.
+         ContentChild* child = ContentChild::GetSingleton();
+         child->SetProcessName(NS_LITERAL_STRING("(Preallocated app)"));
+         mozilla::ipc::Transport* transport = child->GetTransport();
+         int fd = transport->GetFileDescriptor();
+         transport->ResetFileDescriptor(fd);
+ 
+         IToplevelProtocol* toplevel = child->GetFirstOpenedActors();
+@@ -1751,15 +1755,20 @@ AddNewIPCProcess(pid_t aPid, NuwaProtoFd
+ 
+     nsRefPtr<RunAddNewIPCProcess> runner = new RunAddNewIPCProcess(aPid, maps);
+     NS_DispatchToMainThread(runner);
+ }
+ 
+ NS_EXPORT void
+ OnNuwaProcessReady()
+ {
++    // The Nuwa process is ready. We can no longer perform GC and CC, which will
++    // block the main thread.
++    nsJSContext::SetGCSuppressed(true);
++    nsJSContext::SetCCSuppressed(true);
++
+     mozilla::dom::ContentChild* content =
+         mozilla::dom::ContentChild::GetSingleton();
+     content->SendNuwaReady();
+ }
+ #endif // MOZ_NUWA_PROCESS
+ 
+ }
+diff --git a/xpcom/threads/nsTimerImpl.cpp b/xpcom/threads/nsTimerImpl.cpp
+--- a/xpcom/threads/nsTimerImpl.cpp
++++ b/xpcom/threads/nsTimerImpl.cpp
+@@ -9,16 +9,20 @@
+ #include "nsAutoPtr.h"
+ #include "nsThreadManager.h"
+ #include "nsThreadUtils.h"
+ #include "plarena.h"
+ #include "pratom.h"
+ #include "GeckoProfiler.h"
+ #include "mozilla/Atomics.h"
+ 
++#ifdef MOZ_NUWA_PROCESS
++#include "ipc/Nuwa.h"
++#endif
++
+ using mozilla::Atomic;
+ using mozilla::TimeDuration;
+ using mozilla::TimeStamp;
+ 
+ static Atomic<int32_t>  gGenerator;
+ static TimerThread*     gThread = nullptr;
+ 
+ #ifdef DEBUG_TIMERS
+@@ -319,16 +323,22 @@ nsresult nsTimerImpl::InitCommon(uint32_
+ 
+   if (NS_WARN_IF(!gThread))
+     return NS_ERROR_NOT_INITIALIZED;
+   if (!mEventTarget) {
+     NS_ERROR("mEventTarget is NULL");
+     return NS_ERROR_NOT_INITIALIZED;
+   }
+ 
++#if defined(DEBUG) && defined(MOZ_NUWA_PROCESS)
++  if (IsNuwaProcess() && IsNuwaReady()) {
++    NS_RUNTIMEABORT("No timer allowed after the Nuwa process is ready!");
++  }
++#endif
++
+   rv = gThread->Init();
+   if (NS_WARN_IF(NS_FAILED(rv)))
+     return rv;
+ 
+   /**
+    * In case of re-Init, both with and without a preceding Cancel, clear the
+    * mCanceled flag and assign a new mGeneration.  But first, remove any armed
+    * timer from the timer thread's list.
