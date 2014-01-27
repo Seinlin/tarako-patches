@@ -1,7 +1,7 @@
-From 8d3aa172289734cd47d5ea0577ba831ed623df31 Mon Sep 17 00:00:00 2001
-From: Kaizhen <kli@mozilla.com>
-Date: Mon, 13 Jan 2014 00:06:57 +0800
-Subject: [PATCH 09/12] Bug 948276 - Lazy load accessibility support.
+From 96c1e9030c594bb4d932a31571ef92f40d943ad3 Mon Sep 17 00:00:00 2001
+From: dannyliang <dliang@mozilla.com>
+Date: Mon, 27 Jan 2014 10:59:05 +0800
+Subject: [PATCH 09/15] Bug 948276 - Lazy load accessibility support.
 
 ---
  b2g/chrome/content/settings.js |   47 +++++++++-------------------------------
@@ -9,10 +9,10 @@ Subject: [PATCH 09/12] Bug 948276 - Lazy load accessibility support.
  2 files changed, 10 insertions(+), 39 deletions(-)
 
 diff --git a/b2g/chrome/content/settings.js b/b2g/chrome/content/settings.js
-index 48cfe75..25d1a30 100644
+index 95d919d..1b24064 100644
 --- a/b2g/chrome/content/settings.js
 +++ b/b2g/chrome/content/settings.js
-@@ -527,41 +527,14 @@ SettingsListener.observe("debug.paint-flashing.enabled", false, function(value)
+@@ -527,44 +527,17 @@ SettingsListener.observe("debug.paint-flashing.enabled", false, function(value)
  SettingsListener.observe("layers.draw-borders", false, function(value) {
    Services.prefs.setBoolPref("layers.draw-borders", value);
  });
@@ -64,6 +64,9 @@ index 48cfe75..25d1a30 100644
 +    AccessFu.attach(window);
 +  }
 +});
+ 
+ // =================== AsyncPanZoom ======================
+ 
 diff --git a/b2g/chrome/content/shell.js b/b2g/chrome/content/shell.js
 index b3427d6..4047fc8 100644
 --- a/b2g/chrome/content/shell.js
