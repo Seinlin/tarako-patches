@@ -5186,7 +5186,7 @@ index 87f16fb..f1febb4 100644
     */
    updateContactFieldType1: function updateContactFieldType1(pbr, contact, field, onsuccess, onerror) {
 +    let ICCRecordHelper = this.context.ICCRecordHelper;
-+    
++
      if (field === USIM_PBR_EMAIL) {
        ICCRecordHelper.updateEmail(pbr, contact.recordId, contact.email, null, onsuccess, onerror);
      } else if (field === USIM_PBR_ANR0) {
