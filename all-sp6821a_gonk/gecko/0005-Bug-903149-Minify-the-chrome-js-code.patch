@@ -54,7 +54,7 @@ index 0000000..e7cdce6
 +# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 +# copies of the Software, and to permit persons to whom the Software is
 +# furnished to do so, subject to the following conditions:
-+# 
++#
 +# The above copyright notice and this permission notice shall be included in
 +# all copies or substantial portions of the Software.
 +#
@@ -154,7 +154,7 @@ index 0000000..e7cdce6
 +            return
 +
 +        while 1:
-+            next2 = read(1)  
++            next2 = read(1)
 +            if not next2:
 +                last = next1.strip()
 +                if not (doing_single_comment or doing_multi_comment)\
@@ -255,11 +255,11 @@ index 0000000..19dd01a
 +            print(repr(thing1), repr(thing2))
 +            raise AssertionError
 +        return True
-+    
++
 +    def assertMinified(self, js_input, expected):
 +        minified = jsmin.jsmin(js_input)
 +        assert minified == expected, "%r != %r" % (minified, expected)
-+        
++
 +    def testQuoted(self):
 +        js = r'''
 +        Object.extend(String, {
@@ -296,20 +296,20 @@ index 0000000..19dd01a
 +        }
 +        //bye
 +        '''
-+        expected = r""" 
++        expected = r"""
 +if(Object.isFunction(Array.prototype.forEach))
 +Array.prototype._each=Array.prototype.forEach;if(!Array.prototype.indexOf)Array.prototype.indexOf=function(item,i){ function(){ foo; location='http://foo.com;';}"""
 +        # print expected
 +        self.assertMinified(js, expected)
-+    
++
 +    def testEmpty(self):
 +        self.assertMinified('', '')
 +        self.assertMinified(' ', '')
 +        self.assertMinified('\n', '')
 +        self.assertMinified('\r\n', '')
 +        self.assertMinified('\t', '')
-+        
-+        
++
++
 +    def testMultiComment(self):
 +        js = r"""
 +        function foo() {
@@ -326,24 +326,24 @@ index 0000000..19dd01a
 +        expected = r"""function foo(){print('hey');}
 +another thing;"""
 +        self.assertMinified(js, expected)
-+    
++
 +    def testLeadingComment(self):
 +        js = r"""/* here is a comment at the top
-+        
++
 +        it ends here */
 +        function foo() {
 +            alert('crud');
 +        }
-+        
++
 +        """
 +        expected = r"""function foo(){alert('crud');}"""
 +        self.assertMinified(js, expected)
-+        
++
 +    def testJustAComment(self):
 +        self.assertMinified('     // a comment', '')
-+        
++
 +    def testRe(self):
-+        js = r'''  
++        js = r'''
 +        var str = this.replace(/\\./g, '@').replace(/"[^"\\\n\r]*"/g, '');
 +        return (/^[,:{}\[\]0-9.\-+Eaeflnr-u \n\r\t]*$/).test(str);
 +        });'''
@@ -368,10 +368,10 @@ index 0000000..19dd01a
 +        }
 +
 +        // fix for gecko engine
-+        Element.cleanWhitespace(element); 
++        Element.cleanWhitespace(element);
 +        """
 +        expected = r"""var options_for_droppable={overlap:options.overlap,containment:options.containment,tree:options.tree,hoverclass:options.hoverclass,onHover:Sortable.onHover}
-+var options_for_tree={onHover:Sortable.onEmptyHover,overlap:options.overlap,containment:options.containment,hoverclass:options.hoverclass} 
++var options_for_tree={onHover:Sortable.onEmptyHover,overlap:options.overlap,containment:options.containment,hoverclass:options.hoverclass}
 +Element.cleanWhitespace(element);"""
 +        self.assertMinified(js, expected)
 +
@@ -409,48 +409,48 @@ index 0000000..19dd01a
 +          onFailure: this.onFailure
 +        });
 +        """
-+        expected = r"""onSuccess:function(transport){var js=transport.responseText.strip();if(!/^\[.*\]$/.test(js)) 
++        expected = r"""onSuccess:function(transport){var js=transport.responseText.strip();if(!/^\[.*\]$/.test(js))
 +throw'Server returned an invalid collection representation.';this._collection=eval(js);this.checkForExternalText();}.bind(this),onFailure:this.onFailure});"""
 +        self.assertMinified(js, expected)
-+    
++
 +    def testSpaceInRe(self):
 +        js = r"""
 +        num = num.replace(/ /g,'');
 +        """
 +        self.assertMinified(js, "num=num.replace(/ /g,'');")
-+    
++
 +    def testEmptyString(self):
 +        js = r'''
 +        function foo('') {
-+        
++
 +        }
 +        '''
 +        self.assertMinified(js, "function foo(''){}")
-+    
++
 +    def testDoubleSpace(self):
 +        js = r'''
 +var  foo    =  "hey";
 +        '''
 +        self.assertMinified(js, 'var foo="hey";')
-+    
++
 +    def testLeadingRegex(self):
 +        js = r'/[d]+/g    '
 +        self.assertMinified(js, js.strip())
-+    
++
 +    def testLeadingString(self):
 +        js = r"'a string in the middle of nowhere'; // and a comment"
 +        self.assertMinified(js, "'a string in the middle of nowhere';")
-+    
++
 +    def testSingleCommentEnd(self):
 +        js = r'// a comment\n'
 +        self.assertMinified(js, '')
-+    
++
 +    def testInputStream(self):
 +        try:
 +            from StringIO import StringIO
 +        except ImportError:
 +            from io import StringIO
-+            
++
 +        ins = StringIO(r'''
 +            function foo('') {
 +
@@ -461,7 +461,7 @@ index 0000000..19dd01a
 +        m.minify(ins, outs)
 +        output = outs.getvalue()
 +        assert output == "function foo(''){}"
-+    
++
 +    def testUnicode(self):
 +        instr = u'\u4000 //foo'
 +        expected = u'\u4000'
@@ -470,9 +470,9 @@ index 0000000..19dd01a
 +
 +    def testCommentBeforeEOF(self):
 +        self.assertMinified("//test\r\n", "")
-+    
++
 +    def testCommentInObj(self):
-+        self.assertMinified("""{ 
++        self.assertMinified("""{
 +            a: 1,//comment
 +            }""", "{a:1,}")
 +
@@ -486,7 +486,7 @@ index 0000000..19dd01a
 +
 +    def testImplicitSemicolon2(self):
 +        self.assertMinified("return//comment...\r\na", "return\na")
-+    
++
 +    def testSingleComment2(self):
 +        self.assertMinified('x.replace(/\//, "_")// slash to underscore',
 +                'x.replace(/\//,"_")')
@@ -501,7 +501,7 @@ index 0000000..861a9f5
 +++ b/python/jsmin/setup.cfg
 @@ -0,0 +1,5 @@
 +[egg_info]
-+tag_build = 
++tag_build =
 +tag_date = 0
 +tag_svn_revision = 0
 +

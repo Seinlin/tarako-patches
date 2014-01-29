@@ -1732,7 +1732,7 @@ index 0000000..a268c97
 +    mCurExternalIfname = aOther.mCurExternalIfname;
 +    mThreshold = aOther.mThreshold;
 +  }
-+  
++
 +  NetworkParams(const NetworkCommandOptions& aOther) {
 +
 +#define COPY_SEQUENCE_FIELD(prop)                                                            \
@@ -1871,7 +1871,7 @@ index 0000000..a268c97
 +  CommandChain(const NetworkParams& aParams,
 +               COMMAND aCmds[],
 +               uint32_t aLength,
-+               ERROR_CALLBACK aError) 
++               ERROR_CALLBACK aError)
 +  : mIndex(-1)
 +  , mParams(aParams)
 +  , mCommands(aCmds)
@@ -1922,7 +1922,7 @@ index 0000000..a268c97
 +  bool removeHostRoute(NetworkParams& aOptions);
 +  bool removeHostRoutes(NetworkParams& aOptions);
 +  bool removeNetworkRoute(NetworkParams& aOptions);
-+  bool getNetworkInterfaceStats(NetworkParams& aOptions);  
++  bool getNetworkInterfaceStats(NetworkParams& aOptions);
 +  bool setNetworkInterfaceAlarm(NetworkParams& aOptions);
 +  bool enableNetworkInterfaceAlarm(NetworkParams& aOptions);
 +  bool disableNetworkInterfaceAlarm(NetworkParams& aOptions);
@@ -2174,7 +2174,7 @@ index 0000000..1a71fa1
 +}
 +
 +// Callback function for worker thread to update result to main thread.
-+void 
++void
 +NetworkWorker::NotifyResult(NetworkResultOptions& aResult)
 +{
 +  nsCOMPtr<nsIRunnable> runnable = new NetworkResultDispatcher(aResult);
@@ -2558,7 +2558,7 @@ index 0000000..0ffad34
 +  float rxBytes;                    // for "getNetworkInterfaceStats".
 +  float txBytes;                    // for "getNetworkInterfaceStats".
 +  DOMString date;                   // for "getNetworkInterfaceStats".
-+  long threshold;                   // for "setNetworkInterfaceAlarm", 
++  long threshold;                   // for "setNetworkInterfaceAlarm",
 +                                    //     "enableNetworkInterfaceAlarm".
 +  DOMString startIp;                // for "setDhcpServer".
 +  DOMString endIp;                  // for "setDhcpServer".
