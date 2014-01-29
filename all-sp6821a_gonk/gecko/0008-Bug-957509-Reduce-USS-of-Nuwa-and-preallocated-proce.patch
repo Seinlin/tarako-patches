@@ -213,8 +213,8 @@ index cfdb2cd..66613ed 100644
  {
    NS_ASSERTION(!mIsNuwaReady, "Multiple Nuwa processes created!");
    ProcessPriorityManager::SetProcessPriority(mPreallocatedAppProcess,
--                                             hal::PROCESS_PRIORITY_FOREGROUND);
-+                                             hal::PROCESS_PRIORITY_FOREGROUND,
+-                                             hal::PROCESS_PRIORITY_MASTER);
++                                             hal::PROCESS_PRIORITY_MASTER,
 +                                             true);
    mIsNuwaReady = true;
    if (Preferences::GetBool("dom.ipc.processPriorityManager.testMode")) {
