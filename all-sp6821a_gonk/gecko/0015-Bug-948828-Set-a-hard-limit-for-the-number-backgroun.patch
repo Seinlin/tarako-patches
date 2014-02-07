@@ -1,32 +1,13 @@
-From b147bf076fdb222d6d906d9a3c69c321e4e488c2 Mon Sep 17 00:00:00 2001
-From: Kai-Zhen Li <kli@mozilla.com>
-Date: Wed, 22 Jan 2014 19:18:15 +0800
+From d251864b80d94bdce64a5b480b9dacf88235c246 Mon Sep 17 00:00:00 2001
+From: vincentliu <vliu@mozilla.com>
+Date: Fri, 7 Feb 2014 12:19:08 +0800
 Subject: [PATCH] Bug 948828 - Set a hard limit for the number background
  processes
 
 ---
- b2g/app/b2g.js                     |    7 ++++++-
  dom/ipc/ProcessPriorityManager.cpp |   20 ++++++++++++++++++++
- 2 files changed, 26 insertions(+), 1 deletion(-)
+ 1 file changed, 20 insertions(+)
 
-diff --git a/b2g/app/b2g.js b/b2g/app/b2g.js
-index 3a9b839..b06f4bae 100644
---- a/b2g/app/b2g.js
-+++ b/b2g/app/b2g.js
-@@ -619,7 +619,12 @@ pref("dom.ipc.processPriorityManager.temporaryPriorityLockMS", 5000);
- // Number of different background levels for background processes.  We use
- // these different levels to force the low-memory killer to kill processes in
- // a LRU order.
--pref("dom.ipc.processPriorityManager.backgroundLRUPoolLevels", 5);
-+pref("dom.ipc.processPriorityManager.backgroundLRUPoolLevels", 2);
-+
-+// Enable Out Of Background Process killer.
-+// Number of background process would have a hard limit according to the
-+// calculation result from backgroundLRUPoolLevels argument.
-+pref("hal.processPriorityManager.gonk.enableOOBPKiller", true);
- 
- // Kernel parameters for process priorities.  These affect how processes are
- // killed on low-memory and their relative CPU priorities.
 diff --git a/dom/ipc/ProcessPriorityManager.cpp b/dom/ipc/ProcessPriorityManager.cpp
 index dcd1de8..9b50c4f 100644
 --- a/dom/ipc/ProcessPriorityManager.cpp
