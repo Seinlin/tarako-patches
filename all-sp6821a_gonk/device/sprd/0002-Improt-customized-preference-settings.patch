@@ -1,0 +1,24 @@
+From 952ddbfa3d6d73eba6cd0e9e599f662035e2aafc Mon Sep 17 00:00:00 2001
+From: vincentliu <vliu@mozilla.com>
+Date: Fri, 7 Feb 2014 13:54:09 +0800
+Subject: [PATCH] Improt customized preference settings
+
+---
+ sp6821a_gonk/prod_sp6821a.mk |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sp6821a_gonk/prod_sp6821a.mk b/sp6821a_gonk/prod_sp6821a.mk
+index bee4001..2ef5479 100644
+--- a/sp6821a_gonk/prod_sp6821a.mk
++++ b/sp6821a_gonk/prod_sp6821a.mk
+@@ -17,6 +17,7 @@
+ TARGET_PLATFORM := sc8810
+ TARGET_BOARD := sp6821a_gonk
+ BOARDDIR := device/sprd/$(TARGET_BOARD)
++EXPORT_DEVICE_PREFS := device/sprd/$(TARGET_BOARD)
+ 
+ DEVICE_PACKAGE_OVERLAYS := $(BOARDDIR)/overlay
+ 
+-- 
+1.7.9.5
+
