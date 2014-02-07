@@ -1,0 +1,42 @@
+From 293a4f4322f790d3154ec4ad4069b1c2060292db Mon Sep 17 00:00:00 2001
+From: vincentliu <vliu@mozilla.com>
+Date: Fri, 7 Feb 2014 10:37:08 +0800
+Subject: [PATCH] Add dev-pref.js for customized preference setting
+
+---
+ sp6821a_gonk/dev-pref.js |   22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+ create mode 100644 sp6821a_gonk/dev-pref.js
+
+diff --git a/sp6821a_gonk/dev-pref.js b/sp6821a_gonk/dev-pref.js
+new file mode 100644
+index 0000000..e27412a
+--- /dev/null
++++ b/sp6821a_gonk/dev-pref.js
+@@ -0,0 +1,22 @@
++
++pref("layers.composer2d.enabled", false);
++
++pref("dom.ipc.processPriorityManager.backgroundLRUPoolLevels", 2);
++
++// Enable Out Of Background Process killer.
++// Number of background process would have a hard limit according to the
++// calculation result from backgroundLRUPoolLevels argument.
++pref("hal.processPriorityManager.gonk.enableOOBPKiller", true);
++ 
++
++pref("hal.processPriorityManager.gonk.MASTER.KillUnderMB", 1);
++
++pref("hal.processPriorityManager.gonk.FOREGROUND_HIGH.KillUnderMB", 2);
++
++pref("hal.processPriorityManager.gonk.FOREGROUND.KillUnderMB", 4);
++
++pref("hal.processPriorityManager.gonk.BACKGROUND_PERCEIVABLE.KillUnderMB", 6);
++
++pref("hal.processPriorityManager.gonk.BACKGROUND.KillUnderMB", 15);
++
++pref("hal.processPriorityManager.gonk.notifyLowMemUnderMB", 10);
+\ No newline at end of file
+-- 
+1.7.9.5
+
