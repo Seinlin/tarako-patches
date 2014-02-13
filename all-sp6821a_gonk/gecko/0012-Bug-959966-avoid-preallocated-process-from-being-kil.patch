@@ -1,18 +1,18 @@
-From 6d30e6accd6d3f2bc04c3dc6760e4da5a8709c52 Mon Sep 17 00:00:00 2001
-From: Kai-Zhen Li <kli@mozilla.com>
-Date: Thu, 16 Jan 2014 20:28:53 +0800
-Subject: [PATCH 12/12] Bug 959966 -  avoid preallocated process from being
- killed for low memory devices.
+From 7562c4e2a21cabf1cc2c9deee3d06d98db3871fb Mon Sep 17 00:00:00 2001
+From: dannyliang <dliang@mozilla.com>
+Date: Thu, 13 Feb 2014 19:31:01 +0800
+Subject: [PATCH] Bug 959966 - avoid preallocated process from being killed
+ for low memory devices.
 
 ---
  dom/ipc/ContentParent.cpp |    7 +------
  1 file changed, 1 insertion(+), 6 deletions(-)
 
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index 50c0b72..8815ab2 100644
+index 1bfa38a..df660a3 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
-@@ -1348,12 +1348,7 @@ ContentParent::ContentParent(ContentParent* aTemplate,
+@@ -1363,12 +1363,7 @@ ContentParent::ContentParent(ContentParent* aTemplate,
      // Set the subprocess's priority (bg if we're a preallocated process, fg
      // otherwise).  We do this first because we're likely /lowering/ its CPU and
      // memory priority, which it has inherited from this process.
@@ -25,7 +25,7 @@ index 50c0b72..8815ab2 100644
 +    ProcessPriority priority = PROCESS_PRIORITY_MASTER;
  
      InitInternal(priority,
-                  false, /* Setup Off-main thread compositing */
+                  false /* aIsTemplate */);
 -- 
 1.7.9.5
 
