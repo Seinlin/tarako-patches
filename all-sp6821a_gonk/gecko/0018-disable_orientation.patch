@@ -1,0 +1,149 @@
+From 86a4600bcca37bb1574d715cb541ed85245978df Mon Sep 17 00:00:00 2001
+From: dannyliang <dliang@mozilla.com>
+Date: Thu, 13 Feb 2014 19:57:13 +0800
+Subject: [PATCH] disable_orientation
+
+---
+ b2g/chrome/content/settings.js       |   41 +++-------------------------------
+ dom/system/gonk/AutoMounter.cpp      |    5 +++++
+ hal/moz.build                        |    2 +-
+ layout/style/nsTransitionManager.cpp |    2 +-
+ media/libcubeb/src/cubeb_opensl.c    |    2 +-
+ widget/gonk/OrientationObserver.cpp  |    4 ++--
+ 6 files changed, 13 insertions(+), 43 deletions(-)
+
+diff --git a/b2g/chrome/content/settings.js b/b2g/chrome/content/settings.js
+index 88102e2..24d659d 100644
+--- a/b2g/chrome/content/settings.js
++++ b/b2g/chrome/content/settings.js
+@@ -527,6 +527,9 @@ SettingsListener.observe("debug.paint-flashing.enabled", false, function(value)
+ SettingsListener.observe("layers.draw-borders", false, function(value) {
+   Services.prefs.setBoolPref("layers.draw-borders", value);
+ });
++SettingsListener.observe("layers.composer2d.enabled", true, function(value) {
++  Services.prefs.setBoolPref("layers.composer2d.enabled", value);
++});
+ 
+ // ================ Accessibility ============
+ SettingsListener.observe("accessibility.screenreader", false, function(value) {
+@@ -536,44 +539,6 @@ SettingsListener.observe("accessibility.screenreader", false, function(value) {
+   }
+ });
+ 
+-(function Composer2DSettingToPref() {
+-  //layers.composer.enabled can be toggled in three ways
+-  //In order of precedence they are:
+-  //First: layers.composer.enabled mozSetting
+-  //Second: layers.composer.enabled gecko pref
+-  //Third: ro.display.colorfill gonk prop
+-
+-  var req = navigator.mozSettings.createLock().get('layers.composer2d.enabled');
+-  req.onsuccess = function() {
+-    if(typeof(req.result['layers.composer2d.enabled']) == 'undefined') {
+-      var enabled = false;
+-      if (Services.prefs.getPrefType('layers.composer2d.enabled') == Ci.nsIPrefBranch.PREF_BOOL) {
+-        enabled = Services.prefs.getBoolPref('layers.composer2d.enabled');
+-      }
+-      else {
+-#ifdef MOZ_WIDGET_GONK
+-        if (libcutils.property_get('ro.display.colorfill') == 1) {
+-          enabled = true;
+-        }
+-        else {
+-          enabled = false;
+-        }
+-#endif
+-      }
+-      navigator.mozSettings.createLock().set(
+-        {'layers.composer2d.enabled': enabled});
+-    }
+-
+-    SettingsListener.observe("layers.composer2d.enabled", true, function(value) {
+-      Services.prefs.setBoolPref("layers.composer2d.enabled", value);
+-    });
+-  };
+-  req.onerror = function() {
+-    dump("Error configuring layers.composer2d.enabled setting");
+-  };
+-
+-})();
+-
+ // =================== AsyncPanZoom ======================
+ 
+ SettingsListener.observe('apz.force-enable', false, function(value) {
+diff --git a/dom/system/gonk/AutoMounter.cpp b/dom/system/gonk/AutoMounter.cpp
+index 4ed8918..3cf591a 100644
+--- a/dom/system/gonk/AutoMounter.cpp
++++ b/dom/system/gonk/AutoMounter.cpp
+@@ -479,6 +479,11 @@ AutoMounter::UpdateState()
+                    fileInfo.mAppName.get(),
+                    fileInfo.mComm.get(),
+                    fileInfo.mExe.get());
++               int err = kill(fileInfo.mPid, SIGKILL);
++               if (err < 0) {
++                   LOGW(" PID: %d can not be killed.\n", fileInfo.mPid);
++                   break;
++               }
+             } while (fileFinder.Next(&fileInfo));
+             LOGW("UpdateState: Mounted volume %s has open files, not sharing or formatting",
+                  vol->NameStr());
+diff --git a/hal/moz.build b/hal/moz.build
+index 234a30a..d7ba9d8 100644
+--- a/hal/moz.build
++++ b/hal/moz.build
+@@ -63,7 +63,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':
+ elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
+     UNIFIED_SOURCES += [
+         'gonk/GonkDiskSpaceWatcher.cpp',
+-        'gonk/GonkFMRadio.cpp',
++        'gonk/GonkFMRadio_sprd.cpp',
+         'gonk/GonkSensor.cpp',
+         'gonk/GonkSwitch.cpp',
+         'gonk/UeventPoller.cpp',
+diff --git a/layout/style/nsTransitionManager.cpp b/layout/style/nsTransitionManager.cpp
+index 4c0d888..c417ba9 100644
+--- a/layout/style/nsTransitionManager.cpp
++++ b/layout/style/nsTransitionManager.cpp
+@@ -180,7 +180,7 @@ ElementTransitions::CanPerformOnCompositorThread(CanAnimateFlags aFlags) const
+     if (!css::CommonElementAnimationData::CanAnimatePropertyOnCompositor(mElement,
+                                                                          pt.mProperty,
+                                                                          aFlags) ||
+-        css::CommonElementAnimationData::IsCompositorAnimationDisabledForFrame(frame)) {
++        !css::CommonElementAnimationData::IsCompositorAnimationDisabledForFrame(frame)) {
+       return false;
+     }
+     if (pt.mProperty == eCSSProperty_opacity) {
+diff --git a/media/libcubeb/src/cubeb_opensl.c b/media/libcubeb/src/cubeb_opensl.c
+index c2d5c8e..57b1643d 100644
+--- a/media/libcubeb/src/cubeb_opensl.c
++++ b/media/libcubeb/src/cubeb_opensl.c
+@@ -369,7 +369,7 @@ opensl_stream_init(cubeb * ctx, cubeb_stream ** stream, char const * stream_name
+ 
+   *stream = NULL;
+ 
+-  if (stream_params.rate < 8000 || stream_params.rate > 48000 ||
++  if (stream_params.rate < 8000 || stream_params.rate > 88200 ||
+       stream_params.channels < 1 || stream_params.channels > 32 ||
+       latency < 1 || latency > 2000) {
+     return CUBEB_ERROR_INVALID_FORMAT;
+diff --git a/widget/gonk/OrientationObserver.cpp b/widget/gonk/OrientationObserver.cpp
+index dd70293..6d2ec74 100644
+--- a/widget/gonk/OrientationObserver.cpp
++++ b/widget/gonk/OrientationObserver.cpp
+@@ -239,11 +239,11 @@ OrientationObserver::Notify(const hal::SensorData& aSensorData)
+ void
+ OrientationObserver::EnableAutoOrientation()
+ {
+-  MOZ_ASSERT(NS_IsMainThread() && !mAutoOrientationEnabled);
++/*  MOZ_ASSERT(NS_IsMainThread() && !mAutoOrientationEnabled);
+ 
+   mOrientation->Reset();
+   hal::RegisterSensorObserver(hal::SENSOR_ACCELERATION, this);
+-  mAutoOrientationEnabled = true;
++  mAutoOrientationEnabled = true;*/
+ }
+ 
+ /**
+-- 
+1.7.9.5
+
