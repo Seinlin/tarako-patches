@@ -56,7 +56,7 @@ case $(sed -e '/^.*[^#]PLATFORM_VERSION .*=/!d  ; s/.*PLATFORM_VERSION.*=[^0-9]*
         echo ${MANIFEST_ID} ${MANIFEST_ID}-${DEVICE} jb jb-${DEVICE} all all-${DEVICE}
         ;;
     4.0)
-        echo ${MANIFEST_ID} ${MANIFEST_ID}-${DEVICE} ics ics-${DEVICE} all all-${DEVICE}
+        echo ${MANIFEST_ID} ${MANIFEST_ID}-${DEVICE} ics ics-${DEVICE} all all-sp6821a_gonk
         ;;
     2.3)
         echo ${MANIFEST_ID} ${MANIFEST_ID}-${DEVICE} gb gb-${DEVICE} all all-${DEVICE}
