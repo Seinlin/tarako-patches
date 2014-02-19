@@ -1,0 +1,4852 @@
+# HG changeset patch
+# Parent a9afc0771c778c078a90fe71c13b9127af33c483
+# User Vicamo Yang <vyang@mozilla.com>
+Bug 960894 - 4/4: fix existing ril_worker test cases. r=hsinyi,yoshi, a=fabrice
+
+diff --git a/dom/system/gonk/tests/header_helpers.js b/dom/system/gonk/tests/header_helpers.js
+--- a/dom/system/gonk/tests/header_helpers.js
++++ b/dom/system/gonk/tests/header_helpers.js
+@@ -38,25 +38,21 @@ function newWorker(custom_ns) {
+     postMessage: function fakepostMessage(message) {
+     },
+ 
+     // Define these variables inside the worker scope so ES5 strict mode
+     // doesn't flip out.
+     onmessage: undefined,
+     onerror: undefined,
+ 
+-    CLIENT_ID: 0,
+     DEBUG: true
+   };
+   // The 'self' variable in a worker points to the worker's own namespace.
+   worker_ns.self = worker_ns;
+ 
+-  // systemlibs.js utilizes ctypes for loading native libraries.
+-  Cu.import("resource://gre/modules/ctypes.jsm", worker_ns);
+-
+   // Copy the custom definitions over.
+   for (let key in custom_ns) {
+     worker_ns[key] = custom_ns[key];
+   }
+ 
+   // fake require() for toolkit/components/workerloader/require.js
+   let require = (function() {
+     return function require(script) {
+@@ -71,16 +67,19 @@ function newWorker(custom_ns) {
+     value: require,
+     enumerable: true,
+     configurable: false
+   });
+ 
+   // Load the RIL worker itself.
+   worker_ns.importScripts("ril_worker.js");
+ 
++  // Register at least one client.
++  worker_ns.ContextPool.registerClient({ clientId: 0 });
++
+   return worker_ns;
+ }
+ 
+ /**
+  * Create a parcel suitable for postRILMessage().
+  *
+  * @param fakeParcelSize
+  *        Value to be written to parcel size field for testing
+diff --git a/dom/system/gonk/tests/test_ril_worker_barring_password.js b/dom/system/gonk/tests/test_ril_worker_barring_password.js
+--- a/dom/system/gonk/tests/test_ril_worker_barring_password.js
++++ b/dom/system/gonk/tests/test_ril_worker_barring_password.js
+@@ -10,39 +10,41 @@ function run_test() {
+ const PIN = "0000";
+ const NEW_PIN = "1234";
+ 
+ /**
+  * Helper function.
+  */
+ function newUint8Worker() {
+   let worker = newWorker();
++  let context = worker.ContextPool._contexts[0];
+   let index = 0; // index for read
+   let buf = [];
+ 
+-  worker.Buf.writeUint8 = function (value) {
++  context.Buf.writeUint8 = function (value) {
+     buf.push(value);
+   };
+ 
+-  worker.Buf.readUint8 = function () {
++  context.Buf.readUint8 = function () {
+     return buf[index++];
+   };
+ 
+-  worker.Buf.seekIncoming = function (offset) {
++  context.Buf.seekIncoming = function (offset) {
+     index += offset;
+   };
+ 
+   worker.debug = do_print;
+ 
+   return worker;
+ }
+ 
+ add_test(function test_change_call_barring_password() {
+   let worker = newUint8Worker();
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
+ 
+   function do_test(facility, pin, newPin) {
+     buf.sendParcel = function fakeSendParcel () {
+       // Request Type.
+       do_check_eq(this.readInt32(), REQUEST_CHANGE_BARRING_PASSWORD);
+ 
+       // Token : we don't care.
+       this.readInt32();
+@@ -50,17 +52,17 @@ add_test(function test_change_call_barri
+       let parcel = this.readStringList();
+       do_check_eq(parcel.length, 3);
+       do_check_eq(parcel[0], facility);
+       do_check_eq(parcel[1], pin);
+       do_check_eq(parcel[2], newPin);
+     };
+ 
+     let options = {facility: facility, pin: pin, newPin: newPin};
+-    worker.RIL.changeCallBarringPassword(options);
++    context.RIL.changeCallBarringPassword(options);
+   }
+ 
+   do_test(ICC_CB_FACILITY_BA_ALL, PIN, NEW_PIN);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_check_change_call_barring_password_result() {
+@@ -68,20 +70,21 @@ add_test(function test_check_change_call
+   let worker = newWorker({
+     postMessage: function fakePostMessage(message) {
+       do_check_eq(barringPasswordOptions.pin, PIN);
+       do_check_eq(barringPasswordOptions.newPin, NEW_PIN);
+       do_check_eq(message.errorMsg, GECKO_ERROR_SUCCESS);
+     }
+   });
+ 
+-  worker.RIL.changeCallBarringPassword =
++  let context = worker.ContextPool._contexts[0];
++  context.RIL.changeCallBarringPassword =
+     function fakeChangeCallBarringPassword(options) {
+       barringPasswordOptions = options;
+-      worker.RIL[REQUEST_CHANGE_BARRING_PASSWORD](0, {
++      context.RIL[REQUEST_CHANGE_BARRING_PASSWORD](0, {
+         rilRequestError: ERROR_SUCCESS
+       });
+     }
+ 
+-  worker.RIL.changeCallBarringPassword({pin: PIN, newPin: NEW_PIN});
++  context.RIL.changeCallBarringPassword({pin: PIN, newPin: NEW_PIN});
+ 
+   run_next_test();
+ });
+diff --git a/dom/system/gonk/tests/test_ril_worker_buf.js b/dom/system/gonk/tests/test_ril_worker_buf.js
+--- a/dom/system/gonk/tests/test_ril_worker_buf.js
++++ b/dom/system/gonk/tests/test_ril_worker_buf.js
+@@ -26,55 +26,57 @@ function add_test_incoming_parcel(parcel
+ 
+     if (!parcel) {
+       parcel = newIncomingParcel(-1,
+                                  worker.RESPONSE_TYPE_UNSOLICITED,
+                                  worker.REQUEST_VOICE_REGISTRATION_STATE,
+                                  [0, 0, 0, 0]);
+     }
+ 
++    let context = worker.ContextPool._contexts[0];
+     // supports only requests less or equal than UINT8_MAX(255).
+-    let buf = worker.Buf;
++    let buf = context.Buf;
+     let request = parcel[buf.PARCEL_SIZE_SIZE + buf.UINT32_SIZE];
+-    worker.RIL[request] = function ril_request_handler() {
+-      handler(worker);
+-      worker.postMessage();
++    context.RIL[request] = function ril_request_handler() {
++      handler.apply(this, arguments);
+     };
+ 
+-    worker.onRILMessage(parcel);
++    worker.onRILMessage(0, parcel);
+ 
+     // end of incoming parcel's trip, let's do next test.
+     run_next_test();
+   });
+ }
+ 
+ // Test normal parcel handling.
+ add_test_incoming_parcel(null,
+-  function test_normal_parcel_handling(worker) {
++  function test_normal_parcel_handling() {
++    let self = this;
+     do_check_throws(function normal_handler() {
+       // reads exactly the same size, should not throw anything.
+-      worker.Buf.readInt32();
++      self.context.Buf.readInt32();
+     });
+   }
+ );
+ 
+ // Test parcel under read.
+ add_test_incoming_parcel(null,
+-  function test_parcel_under_read(worker) {
++  function test_parcel_under_read() {
++    let self = this;
+     do_check_throws(function under_read_handler() {
+       // reads less than parcel size, should not throw.
+-      worker.Buf.readUint16();
++      self.context.Buf.readUint16();
+     });
+   }
+ );
+ 
+ // Test parcel over read.
+ add_test_incoming_parcel(null,
+-  function test_parcel_over_read(worker) {
+-    let buf = worker.Buf;
++  function test_parcel_over_read() {
++    let buf = this.context.Buf;
+ 
+     // read all data available
+     while (buf.readAvailable > 0) {
+       buf.readUint8();
+     }
+ 
+     do_check_throws(function over_read_handler() {
+       // reads more than parcel size, should throw an error.
+@@ -89,31 +91,32 @@ add_test(function test_incoming_parcel_b
+     postRILMessage: function fakePostRILMessage(data) {
+       // do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // do nothing
+     }
+   });
+ 
++  let context = worker.ContextPool._contexts[0];
+   // A convenient alias.
+-  let buf = worker.Buf;
++  let buf = context.Buf;
+ 
+   // Allocate an array of specified size and set each of its elements to value.
+   function calloc(length, value) {
+     let array = new Array(length);
+     for (let i = 0; i < length; i++) {
+       array[i] = value;
+     }
+     return array;
+   }
+ 
+   // Do nothing in handleParcel().
+   let request = worker.REQUEST_VOICE_REGISTRATION_STATE;
+-  worker.RIL[request] = null;
++  context.RIL[request] = null;
+ 
+   // Prepare two parcels, whose sizes are both smaller than the incoming buffer
+   // size but larger when combined, to trigger the bug.
+   let pA_dataLength = buf.incomingBufferLength / 2;
+   let pA = newIncomingParcel(-1,
+                              worker.RESPONSE_TYPE_UNSOLICITED,
+                              request,
+                              calloc(pA_dataLength, 1));
+@@ -123,50 +126,50 @@ add_test(function test_incoming_parcel_b
+   let pB = newIncomingParcel(-1,
+                              worker.RESPONSE_TYPE_UNSOLICITED,
+                              request,
+                              calloc(pB_dataLength, 1));
+   let pB_parcelSize = pB.length - buf.PARCEL_SIZE_SIZE;
+ 
+   // First, send an incomplete pA and verifies related data pointer:
+   let p1 = pA.subarray(0, pA.length - 1);
+-  worker.onRILMessage(p1);
++  worker.onRILMessage(0, p1);
+   // The parcel should not have been processed.
+   do_check_eq(buf.readAvailable, 0);
+   // buf.currentParcelSize should have been set because incoming data has more
+   // than 4 octets.
+   do_check_eq(buf.currentParcelSize, pA_parcelSize);
+   // buf.readIncoming should contains remaining unconsumed octets count.
+   do_check_eq(buf.readIncoming, p1.length - buf.PARCEL_SIZE_SIZE);
+   // buf.incomingWriteIndex should be ready to accept the last octet.
+   do_check_eq(buf.incomingWriteIndex, p1.length);
+ 
+   // Second, send the last octet of pA and whole pB. The Buf should now expand
+   // to cover both pA & pB.
+   let p2 = new Uint8Array(1 + pB.length);
+   p2.set(pA.subarray(pA.length - 1), 0);
+   p2.set(pB, 1);
+-  worker.onRILMessage(p2);
++  worker.onRILMessage(0, p2);
+   // The parcels should have been both consumed.
+   do_check_eq(buf.readAvailable, 0);
+   // No parcel data remains.
+   do_check_eq(buf.currentParcelSize, 0);
+   // No parcel data remains.
+   do_check_eq(buf.readIncoming, 0);
+   // The Buf should now expand to cover both pA & pB.
+   do_check_eq(buf.incomingWriteIndex, pA.length + pB.length);
+ 
+   // end of incoming parcel's trip, let's do next test.
+   run_next_test();
+ });
+ 
+ // Test Buf.readUint8Array.
+ add_test_incoming_parcel(null,
+-  function test_buf_readUint8Array(worker) {
+-    let buf = worker.Buf;
++  function test_buf_readUint8Array() {
++    let buf = this.context.Buf;
+ 
+     let u8array = buf.readUint8Array(1);
+     do_check_eq(u8array instanceof Uint8Array, true);
+     do_check_eq(u8array.length, 1);
+     do_check_eq(buf.readAvailable, 3);
+ 
+     u8array = buf.readUint8Array(2);
+     do_check_eq(u8array.length, 2);
+diff --git a/dom/system/gonk/tests/test_ril_worker_cdma_info_rec.js b/dom/system/gonk/tests/test_ril_worker_cdma_info_rec.js
+--- a/dom/system/gonk/tests/test_ril_worker_cdma_info_rec.js
++++ b/dom/system/gonk/tests/test_ril_worker_cdma_info_rec.js
+@@ -18,25 +18,26 @@ function newWorkerWithParcel(parcelBuf) 
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
+   let index = 0; // index for read
+   let buf = parcelBuf;
+ 
+-  worker.Buf.readUint8 = function () {
++  let context = worker.ContextPool._contexts[0];
++  context.Buf.readUint8 = function () {
+     return buf[index++];
+   };
+ 
+-  worker.Buf.readUint16 = function () {
++  context.Buf.readUint16 = function () {
+     return buf[index++];
+   };
+ 
+-  worker.Buf.readInt32 = function () {
++  context.Buf.readInt32 = function () {
+     return buf[index++];
+   };
+ 
+   return worker;
+ }
+ 
+ // Test CDMA information record decoder.
+ 
+@@ -45,17 +46,18 @@ function newWorkerWithParcel(parcelBuf) 
+  */
+ add_test(function test_display() {
+   let worker = newWorkerWithParcel([
+                 0x01, // one inforemation record
+                 0x00, // type: display
+                 0x09, // length: 9
+                 0x54, 0x65, 0x73, 0x74, 0x20, 0x49, 0x6E, 0x66,
+                 0x6F, 0x00]);
+-  let helper = worker.CdmaPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.CdmaPDUHelper;
+   let record = helper.decodeInformationRecord();
+ 
+   do_check_eq(record.display, "Test Info");
+ 
+   run_next_test();
+ });
+ 
+ /**
+@@ -67,17 +69,18 @@ add_test(function test_extended_display(
+                 0x07, // type: extended display
+                 0x0E, // length: 14
+                 0x80, // header byte
+                 0x80, // Blank
+                 0x81, // Skip
+                 0x9B, // Text
+                 0x09, 0x54, 0x65, 0x73, 0x74, 0x20, 0x49, 0x6E,
+                 0x66, 0x6F, 0x00]);
+-  let helper = worker.CdmaPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.CdmaPDUHelper;
+   let record = helper.decodeInformationRecord();
+ 
+   do_check_eq(record.extendedDisplay.indicator, 1);
+   do_check_eq(record.extendedDisplay.type, 0);
+   do_check_eq(record.extendedDisplay.records.length, 3);
+   do_check_eq(record.extendedDisplay.records[0].tag, 0x80);
+   do_check_eq(record.extendedDisplay.records[1].tag, 0x81);
+   do_check_eq(record.extendedDisplay.records[2].tag, 0x9B);
+@@ -98,17 +101,18 @@ add_test(function test_mixed() {
+                 0x07, // type: extended display
+                 0x0E, // length: 14
+                 0x80, // header byte
+                 0x80, // Blank
+                 0x81, // Skip
+                 0x9B, // Text
+                 0x09, 0x54, 0x65, 0x73, 0x74, 0x20, 0x49, 0x6E,
+                 0x66, 0x6F, 0x00]);
+-  let helper = worker.CdmaPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.CdmaPDUHelper;
+   let record = helper.decodeInformationRecord();
+ 
+   do_check_eq(record.display, "Test Info");
+   do_check_eq(record.extendedDisplay.indicator, 1);
+   do_check_eq(record.extendedDisplay.type, 0);
+   do_check_eq(record.extendedDisplay.records.length, 3);
+   do_check_eq(record.extendedDisplay.records[0].tag, 0x80);
+   do_check_eq(record.extendedDisplay.records[1].tag, 0x81);
+diff --git a/dom/system/gonk/tests/test_ril_worker_cellbroadcast.js b/dom/system/gonk/tests/test_ril_worker_cellbroadcast.js
+--- a/dom/system/gonk/tests/test_ril_worker_cellbroadcast.js
++++ b/dom/system/gonk/tests/test_ril_worker_cellbroadcast.js
+@@ -28,38 +28,39 @@ add_test(function test_ril_worker_GsmPDU
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
++  let context = worker.ContextPool._contexts[0];
+   function test_dcs(dcs, encoding, language, hasLanguageIndicator, messageClass) {
+-    worker.Buf.readUint8 = function () {
++    context.Buf.readUint8 = function () {
+       return dcs;
+     };
+ 
+     let msg = {};
+-    worker.GsmPDUHelper.readCbDataCodingScheme(msg);
++    context.GsmPDUHelper.readCbDataCodingScheme(msg);
+ 
+     do_check_eq(msg.dcs, dcs);
+     do_check_eq(msg.encoding, encoding);
+     do_check_eq(msg.language, language);
+     do_check_eq(msg.hasLanguageIndicator, hasLanguageIndicator);
+     do_check_eq(msg.messageClass, messageClass);
+   }
+ 
+   function test_dcs_throws(dcs) {
+-    worker.Buf.readUint8 = function () {
++    context.Buf.readUint8 = function () {
+       return dcs;
+     };
+ 
+     do_check_throws(function () {
+-      worker.GsmPDUHelper.readCbDataCodingScheme({});
++      context.GsmPDUHelper.readCbDataCodingScheme({});
+     }, "Unsupported CBS data coding scheme: " + dcs);
+   }
+ 
+   // Group 0000
+   for (let i = 0; i < 16; i++) {
+     test_dcs(i, PDU_DCS_MSG_CODING_7BITS_ALPHABET, CB_DCS_LANG_GROUP_1[i],
+              false, GECKO_SMS_MESSAGE_CLASSES[PDU_DCS_MSG_CLASS_NORMAL]);
+   }
+@@ -137,35 +138,36 @@ add_test(function test_ril_worker_GsmPDU
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
++  let context = worker.ContextPool._contexts[0];
+   function test_data(options, expected) {
+     let readIndex = 0;
+-    worker.Buf.readUint8 = function () {
++    context.Buf.readUint8 = function () {
+       return options[3][readIndex++];
+     };
+-    worker.Buf.readUint8Array = function (length) {
++    context.Buf.readUint8Array = function (length) {
+       let array = new Uint8Array(length);
+       for (let i = 0; i < length; i++) {
+         array[i] = this.readUint8();
+       }
+       return array;
+     };
+ 
+     let msg = {
+       encoding: options[0],
+       language: options[1],
+       hasLanguageIndicator: options[2]
+     };
+-    worker.GsmPDUHelper.readGsmCbData(msg, options[3].length);
++    context.GsmPDUHelper.readGsmCbData(msg, options[3].length);
+ 
+     do_check_eq(msg.body, expected[0]);
+     do_check_eq(msg.data == null, expected[1] == null);
+     if (expected[1] != null) {
+       do_check_eq(msg.data.length, expected[1].length);
+       for (let i = 0; i < expected[1].length; i++) {
+         do_check_eq(msg.data[i], expected[1][i]);
+       }
+@@ -213,17 +215,18 @@ add_test(function test_ril_worker__check
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
+-  let ril = worker.RIL;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
+ 
+   function test(from, to, expected) {
+     do_check_eq(expected, ril._checkCellBroadcastMMISettable(from, to));
+   }
+ 
+   test(-2, -1, false);
+   test(-1, 0, false);
+   test(0, 1, true);
+@@ -263,17 +266,18 @@ add_test(function test_ril_worker__merge
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
+-  let ril = worker.RIL;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
+ 
+   function test(olist, from, to, expected) {
+     let result = ril._mergeCellBroadcastConfigs(olist, from, to);
+     do_check_eq(JSON.stringify(expected), JSON.stringify(result));
+   }
+ 
+   test(null, 0, 1, [0, 1]);
+ 
+diff --git a/dom/system/gonk/tests/test_ril_worker_cellbroadcast_config.js b/dom/system/gonk/tests/test_ril_worker_cellbroadcast_config.js
+--- a/dom/system/gonk/tests/test_ril_worker_cellbroadcast_config.js
++++ b/dom/system/gonk/tests/test_ril_worker_cellbroadcast_config.js
+@@ -11,37 +11,38 @@ add_test(function test_ril_worker_cellbr
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(id, parcel) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
++  let context = worker.ContextPool._contexts[0];
+ 
+   let parcelTypes = [];
+-  let org_newParcel = worker.Buf.newParcel;
+-  worker.Buf.newParcel = function(type, options) {
++  let org_newParcel = context.Buf.newParcel;
++  context.Buf.newParcel = function(type, options) {
+     parcelTypes.push(type);
+     org_newParcel.apply(this, arguments);
+   };
+ 
+   function setup(isCdma) {
+-    worker.RIL._isCdma = isCdma;
+-    worker.RIL.cellBroadcastDisabled = false;
+-    worker.RIL.mergedCellBroadcastConfig = [1, 2, 4, 7];  // 1, 4-6
++    context.RIL._isCdma = isCdma;
++    context.RIL.cellBroadcastDisabled = false;
++    context.RIL.mergedCellBroadcastConfig = [1, 2, 4, 7];  // 1, 4-6
+     parcelTypes = [];
+   }
+ 
+   function test(isCdma, expectedRequest) {
+     setup(isCdma);
+-    worker.RIL.setCellBroadcastDisabled({disabled: true});
++    context.RIL.setCellBroadcastDisabled({disabled: true});
+     // Makesure that request parcel is sent out.
+     do_check_neq(parcelTypes.indexOf(expectedRequest), -1);
+-    do_check_eq(worker.RIL.cellBroadcastDisabled, true);
++    do_check_eq(context.RIL.cellBroadcastDisabled, true);
+   }
+ 
+   test(false, REQUEST_GSM_SMS_BROADCAST_ACTIVATION);
+   test(true, REQUEST_CDMA_SMS_BROADCAST_ACTIVATION);
+ 
+   run_next_test();
+ });
+ 
+@@ -50,16 +51,17 @@ add_test(function test_ril_worker_cellbr
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(id, parcel) {
+       currentParcel = parcel;
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
++  let context = worker.ContextPool._contexts[0];
+ 
+   function U32ArrayFromParcelArray(pa) {
+     do_print(pa);
+     let out = [];
+     for (let i = 0; i < pa.length; i += 4) {
+       let data = pa[i] + (pa[i+1] << 8) + (pa[i+2] << 16) + (pa[i+3] << 24);
+       out.push(data);
+     }
+@@ -77,18 +79,18 @@ add_test(function test_ril_worker_cellbr
+         return;
+       }
+ 
+       found = true;
+       // Check parcel. Data start from 4th word (32bit)
+       do_check_eq(u32Parcel.slice(3).toString(), expected);
+     };
+ 
+-    worker.RIL._isCdma = isCdma;
+-    worker.RIL.setSmsBroadcastConfig(configs);
++    context.RIL._isCdma = isCdma;
++    context.RIL.setSmsBroadcastConfig(configs);
+ 
+     // Makesure that request parcel is sent out.
+     do_check_true(found);
+   }
+ 
+   // (GSM) RIL writes the following data to outgoing parcel:
+   //   nums [(from, to, 0, 0xFF, 1), ... ]
+   test(false,
+@@ -108,22 +110,23 @@ add_test(function test_ril_worker_cellbr
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(id, parcel) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
++  let context = worker.ContextPool._contexts[0];
+ 
+   function test(isCdma, configs, expected) {
+-    worker.RIL._isCdma = isCdma;
+-    worker.RIL.cellBroadcastConfigs = configs;
+-    worker.RIL._mergeAllCellBroadcastConfigs();
+-    do_check_eq(worker.RIL.mergedCellBroadcastConfig.toString(), expected);
++    context.RIL._isCdma = isCdma;
++    context.RIL.cellBroadcastConfigs = configs;
++    context.RIL._mergeAllCellBroadcastConfigs();
++    do_check_eq(context.RIL.mergedCellBroadcastConfig.toString(), expected);
+   }
+ 
+   let configs = {
+     MMI:    [1, 2, 4, 7],   // 1, 4-6
+     CBMI:   [6, 9],         // 6-8
+     CBMID:  [8, 11],        // 8-10
+     CBMIR:  [10, 13]        // 10-12
+   };
+diff --git a/dom/system/gonk/tests/test_ril_worker_cf.js b/dom/system/gonk/tests/test_ril_worker_cf.js
+--- a/dom/system/gonk/tests/test_ril_worker_cf.js
++++ b/dom/system/gonk/tests/test_ril_worker_cf.js
+@@ -11,17 +11,18 @@ function toaFromString(number) {
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+-  return worker.RIL._toaFromString(number);
++  let context = worker.ContextPool._contexts[0];
++  return context.RIL._toaFromString(number);
+ }
+ 
+ add_test(function test_toaFromString_empty() {
+   let retval = toaFromString("");
+ 
+   do_check_eq(retval, TOA_UNKNOWN);
+ 
+   run_next_test();
+@@ -68,24 +69,25 @@ function _getWorker() {
+       return _worker;
+     }
+   };
+ }
+ 
+ add_test(function test_setCallForward_unconditional() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCallForward = function fakeSetCallForward(options) {
+-    worker.RIL[REQUEST_SET_CALL_FORWARD](0, {
++  context.RIL.setCallForward = function fakeSetCallForward(options) {
++    context.RIL[REQUEST_SET_CALL_FORWARD](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.setCallForward({
++  context.RIL.setCallForward({
+     action: Ci.nsIDOMMozMobileCFInfo.CALL_FORWARD_ACTION_REGISTRATION,
+     reason: Ci.nsIDOMMozMobileCFInfo.CALL_FORWARD_REASON_UNCONDITIONAL,
+     serviceClass: ICC_SERVICE_CLASS_VOICE,
+     number: "666222333",
+     timeSeconds: 10
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+@@ -94,46 +96,47 @@ add_test(function test_setCallForward_un
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_queryCallForwardStatus_unconditional() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCallForward = function fakeSetCallForward(options) {
+-    worker.RIL[REQUEST_SET_CALL_FORWARD](0, {
++  context.RIL.setCallForward = function fakeSetCallForward(options) {
++    context.RIL[REQUEST_SET_CALL_FORWARD](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.Buf.readString = function fakeReadString() {
++  context.Buf.readString = function fakeReadString() {
+     return "+34666222333";
+   };
+ 
+-  worker.RIL.queryCallForwardStatus = function fakeQueryCallForward(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.queryCallForwardStatus = function fakeQueryCallForward(options) {
++    context.Buf.int32Array = [
+       0,   // rules.timeSeconds
+       145, // rules.toa
+       49,  // rules.serviceClass
+       Ci.nsIDOMMozMobileCFInfo.CALL_FORWARD_REASON_UNCONDITIONAL, // rules.reason
+       1,   // rules.active
+       1    // rulesLength
+     ];
+-    worker.RIL[REQUEST_QUERY_CALL_FORWARD_STATUS](1, {
++    context.RIL[REQUEST_QUERY_CALL_FORWARD_STATUS](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.queryCallForwardStatus({
++  context.RIL.queryCallForwardStatus({
+     action: Ci.nsIDOMMozMobileCFInfo.CALL_FORWARD_ACTION_QUERY_STATUS,
+     reason: Ci.nsIDOMMozMobileCFInfo.CALL_FORWARD_REASON_UNCONDITIONAL,
+     serviceClass: ICC_SERVICE_CLASS_VOICE,
+     number: "666222333",
+     timeSeconds: 10
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+diff --git a/dom/system/gonk/tests/test_ril_worker_clip.js b/dom/system/gonk/tests/test_ril_worker_clip.js
+--- a/dom/system/gonk/tests/test_ril_worker_clip.js
++++ b/dom/system/gonk/tests/test_ril_worker_clip.js
+@@ -24,59 +24,61 @@ function _getWorker() {
+       return _worker;
+     }
+   };
+ }
+ 
+ add_test(function test_queryCLIP_provisioned() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.RIL.queryCLIP = function fakeQueryCLIP(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.queryCLIP = function fakeQueryCLIP(options) {
++    context.Buf.int32Array = [
+       1,  // CLIP provisioned.
+       1   // Length.
+     ];
+-    worker.RIL[REQUEST_QUERY_CLIP](1, {
++    context.RIL[REQUEST_QUERY_CLIP](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.queryCLIP({});
++  context.RIL.queryCLIP({});
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_true(postedMessage.success);
+   do_check_eq(postedMessage.provisioned, 1);
+   run_next_test();
+ });
+ 
+ add_test(function test_getCLIP_error_generic_failure_invalid_length() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.RIL.queryCLIP = function fakeQueryCLIP(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.queryCLIP = function fakeQueryCLIP(options) {
++    context.Buf.int32Array = [
+       1,  // CLIP provisioned.
+       0   // Length.
+     ];
+-    worker.RIL[REQUEST_QUERY_CLIP](1, {
++    context.RIL[REQUEST_QUERY_CLIP](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.queryCLIP({});
++  context.RIL.queryCLIP({});
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, "GenericFailure");
+   do_check_false(postedMessage.success);
+   run_next_test();
+ });
+diff --git a/dom/system/gonk/tests/test_ril_worker_clir.js b/dom/system/gonk/tests/test_ril_worker_clir.js
+--- a/dom/system/gonk/tests/test_ril_worker_clir.js
++++ b/dom/system/gonk/tests/test_ril_worker_clir.js
+@@ -33,112 +33,116 @@ function _getWorker() {
+       return _worker;
+     }
+   };
+ }
+ 
+ add_test(function test_setCLIR_success() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCLIR = function fakeSetCLIR(options) {
+-    worker.RIL[REQUEST_SET_CLIR](0, {
++  context.RIL.setCLIR = function fakeSetCLIR(options) {
++    context.RIL[REQUEST_SET_CLIR](0, {
+       rilMessageType: "setCLIR",
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.setCLIR({
++  context.RIL.setCLIR({
+     clirMode: CLIR_DEFAULT
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_setCLIR_generic_failure() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCLIR = function fakeSetCLIR(options) {
+-    worker.RIL[REQUEST_SET_CLIR](0, {
++  context.RIL.setCLIR = function fakeSetCLIR(options) {
++    context.RIL[REQUEST_SET_CLIR](0, {
+       rilMessageType: "setCLIR",
+       rilRequestError: ERROR_GENERIC_FAILURE
+     });
+   };
+ 
+-  worker.RIL.setCLIR({
++  context.RIL.setCLIR({
+     clirMode: CLIR_DEFAULT
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, "GenericFailure");
+   do_check_false(postedMessage.success);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_getCLIR_n0_m1() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.RIL.getCLIR = function fakeGetCLIR(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.getCLIR = function fakeGetCLIR(options) {
++    context.Buf.int32Array = [
+       1,  // Presentation indicator is used according to the subscription
+           // of the CLIR service.
+       0,  // CLIR provisioned in permanent mode.
+       2   // Length.
+     ];
+-    worker.RIL[REQUEST_GET_CLIR](1, {
++    context.RIL[REQUEST_GET_CLIR](1, {
+       rilMessageType: "setCLIR",
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.getCLIR({});
++  context.RIL.getCLIR({});
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_true(postedMessage.success);
+   do_check_eq(postedMessage.n, 0);
+   do_check_eq(postedMessage.m, 1);
+   run_next_test();
+ });
+ 
+ add_test(function test_getCLIR_error_generic_failure_invalid_length() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.RIL.getCLIR = function fakeGetCLIR(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.getCLIR = function fakeGetCLIR(options) {
++    context.Buf.int32Array = [
+       1,  // Presentation indicator is used according to the subscription
+           // of the CLIR service.
+       0,  // CLIR provisioned in permanent mode.
+       0   // Length (invalid one).
+     ];
+-    worker.RIL[REQUEST_GET_CLIR](1, {
++    context.RIL[REQUEST_GET_CLIR](1, {
+       rilMessageType: "setCLIR",
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.getCLIR({});
++  context.RIL.getCLIR({});
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, "GenericFailure");
+   do_check_false(postedMessage.success);
+   run_next_test();
+ });
+diff --git a/dom/system/gonk/tests/test_ril_worker_cw.js b/dom/system/gonk/tests/test_ril_worker_cw.js
+--- a/dom/system/gonk/tests/test_ril_worker_cw.js
++++ b/dom/system/gonk/tests/test_ril_worker_cw.js
+@@ -24,107 +24,111 @@ function _getWorker() {
+       return _worker;
+     }
+   };
+ }
+ 
+ add_test(function test_setCallWaiting_success() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCallWaiting = function fakeSetCallWaiting(options) {
+-    worker.RIL[REQUEST_SET_CALL_WAITING](0, {
++  context.RIL.setCallWaiting = function fakeSetCallWaiting(options) {
++    context.RIL[REQUEST_SET_CALL_WAITING](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.setCallWaiting({
++  context.RIL.setCallWaiting({
+     enabled: true
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_setCallWaiting_generic_failure() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCallWaiting = function fakeSetCallWaiting(options) {
+-    worker.RIL[REQUEST_SET_CALL_WAITING](0, {
++  context.RIL.setCallWaiting = function fakeSetCallWaiting(options) {
++    context.RIL[REQUEST_SET_CALL_WAITING](0, {
+       rilRequestError: ERROR_GENERIC_FAILURE
+     });
+   };
+ 
+-  worker.RIL.setCallWaiting({
++  context.RIL.setCallWaiting({
+     enabled: true
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, "GenericFailure");
+   do_check_false(postedMessage.success);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_queryCallWaiting_success_enabled_true() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.RIL.queryCallWaiting = function fakeQueryCallWaiting(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.queryCallWaiting = function fakeQueryCallWaiting(options) {
++    context.Buf.int32Array = [
+       1,  // serviceClass
+       1,  // enabled
+       1   // length
+     ];
+-    worker.RIL[REQUEST_QUERY_CALL_WAITING](1, {
++    context.RIL[REQUEST_QUERY_CALL_WAITING](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.queryCallWaiting({});
++  context.RIL.queryCallWaiting({});
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_true(postedMessage.success);
+   do_check_eq(postedMessage.length, 1);
+   do_check_true(postedMessage.enabled);
+   run_next_test();
+ });
+ 
+ add_test(function test_queryCallWaiting_success_enabled_false() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.RIL.queryCallWaiting = function fakeQueryCallWaiting(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.queryCallWaiting = function fakeQueryCallWaiting(options) {
++    context.Buf.int32Array = [
+       1,  // serviceClass
+       0,  // enabled
+       1   // length
+     ];
+-    worker.RIL[REQUEST_QUERY_CALL_WAITING](1, {
++    context.RIL[REQUEST_QUERY_CALL_WAITING](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.queryCallWaiting({});
++  context.RIL.queryCallWaiting({});
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_true(postedMessage.success);
+   do_check_eq(postedMessage.length, 1);
+   do_check_false(postedMessage.enabled);
+   run_next_test();
+diff --git a/dom/system/gonk/tests/test_ril_worker_ecm.js b/dom/system/gonk/tests/test_ril_worker_ecm.js
+--- a/dom/system/gonk/tests/test_ril_worker_ecm.js
++++ b/dom/system/gonk/tests/test_ril_worker_ecm.js
+@@ -51,131 +51,136 @@ function fireTimeout() {
+     timeoutCallback();
+     timeoutCallback = null;
+   }
+ }
+ 
+ add_test(function test_enter_emergencyCbMode() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+   // Do it twice. Should always send the event.
+   for (let i = 0; i < 2; ++i) {
+-    worker.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
++    context.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
+     let postedMessage = workerHelper.postedMessage;
+ 
+     // Should store the mode.
+-    do_check_eq(worker.RIL._isInEmergencyCbMode, true);
++    do_check_eq(context.RIL._isInEmergencyCbMode, true);
+ 
+     // Should notify change.
+     do_check_eq(postedMessage.rilMessageType, "emergencyCbModeChange");
+     do_check_eq(postedMessage.active, true);
+     do_check_eq(postedMessage.timeoutMs, TIMEOUT_VALUE);
+ 
+     // Should start timer.
+-    do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
++    do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
+   }
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_exit_emergencyCbMode() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
+-  worker.RIL[UNSOLICITED_EXIT_EMERGENCY_CALLBACK_MODE]();
++  context.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
++  context.RIL[UNSOLICITED_EXIT_EMERGENCY_CALLBACK_MODE]();
+   let postedMessage = workerHelper.postedMessage;
+ 
+   // Should store the mode.
+-  do_check_eq(worker.RIL._isInEmergencyCbMode, false);
++  do_check_eq(context.RIL._isInEmergencyCbMode, false);
+ 
+   // Should notify change.
+   do_check_eq(postedMessage.rilMessageType, "emergencyCbModeChange");
+   do_check_eq(postedMessage.active, false);
+ 
+   // Should clear timer.
+-  do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, null);
++  do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, null);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_request_exit_emergencyCbMode_when_timeout() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
+-  do_check_eq(worker.RIL._isInEmergencyCbMode, true);
+-  do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
++  context.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
++  do_check_eq(context.RIL._isInEmergencyCbMode, true);
++  do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
+ 
+   let parcelTypes = [];
+-  worker.Buf.newParcel = function(type, options) {
++  context.Buf.newParcel = function(type, options) {
+     parcelTypes.push(type);
+   };
+ 
+   // Timeout.
+   fireTimeout();
+ 
+   // Should clear timeout event.
+-  do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, null);
++  do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, null);
+ 
+   // Check indeed sent out REQUEST_EXIT_EMERGENCY_CALLBACK_MODE.
+   do_check_neq(parcelTypes.indexOf(REQUEST_EXIT_EMERGENCY_CALLBACK_MODE), -1);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_request_exit_emergencyCbMode_when_dial() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
+-  do_check_eq(worker.RIL._isInEmergencyCbMode, true);
+-  do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
++  context.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
++  do_check_eq(context.RIL._isInEmergencyCbMode, true);
++  do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
+ 
+   let parcelTypes = [];
+-  worker.Buf.newParcel = function(type, options) {
++  context.Buf.newParcel = function(type, options) {
+     parcelTypes.push(type);
+   };
+ 
+   // Dial non-emergency call.
+-  worker.RIL.dial({number: "0912345678",
++  context.RIL.dial({number: "0912345678",
+                   isDialEmergency: false});
+ 
+   // Should clear timeout event.
+-  do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, null);
++  do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, null);
+ 
+   // Check indeed sent out REQUEST_EXIT_EMERGENCY_CALLBACK_MODE.
+   do_check_neq(parcelTypes.indexOf(REQUEST_EXIT_EMERGENCY_CALLBACK_MODE), -1);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_request_exit_emergencyCbMode_explicitly() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
+-  do_check_eq(worker.RIL._isInEmergencyCbMode, true);
+-  do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
++  context.RIL[UNSOLICITED_ENTER_EMERGENCY_CALLBACK_MODE]();
++  do_check_eq(context.RIL._isInEmergencyCbMode, true);
++  do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, TIMER_ID);
+ 
+   let parcelTypes = [];
+-  worker.Buf.newParcel = function(type, options) {
++  context.Buf.newParcel = function(type, options) {
+     parcelTypes.push(type);
+   };
+ 
+-  worker.RIL.handleChromeMessage({rilMessageType: "exitEmergencyCbMode"});
+-  worker.RIL[REQUEST_EXIT_EMERGENCY_CALLBACK_MODE](1, {
++  context.RIL.handleChromeMessage({rilMessageType: "exitEmergencyCbMode"});
++  context.RIL[REQUEST_EXIT_EMERGENCY_CALLBACK_MODE](1, {
+     rilMessageType: "exitEmergencyCbMode",
+     rilRequestError: ERROR_SUCCESS
+   });
+   let postedMessage = workerHelper.postedMessage;
+ 
+   // Should clear timeout event.
+-  do_check_eq(worker.RIL._exitEmergencyCbModeTimeoutID, null);
++  do_check_eq(context.RIL._exitEmergencyCbModeTimeoutID, null);
+ 
+   // Check indeed sent out REQUEST_EXIT_EMERGENCY_CALLBACK_MODE.
+   do_check_neq(parcelTypes.indexOf(REQUEST_EXIT_EMERGENCY_CALLBACK_MODE), -1);
+ 
+   // Send back the response.
+   do_check_eq(postedMessage.rilMessageType, "exitEmergencyCbMode");
+ 
+   run_next_test();
+diff --git a/dom/system/gonk/tests/test_ril_worker_icc.js b/dom/system/gonk/tests/test_ril_worker_icc.js
+--- a/dom/system/gonk/tests/test_ril_worker_icc.js
++++ b/dom/system/gonk/tests/test_ril_worker_icc.js
+@@ -10,40 +10,42 @@ function run_test() {
+ /**
+  * Helper function.
+  */
+ function newUint8Worker() {
+   let worker = newWorker();
+   let index = 0; // index for read
+   let buf = [];
+ 
+-  worker.Buf.writeUint8 = function (value) {
++  let context = worker.ContextPool._contexts[0];
++  context.Buf.writeUint8 = function (value) {
+     buf.push(value);
+   };
+ 
+-  worker.Buf.readUint8 = function () {
++  context.Buf.readUint8 = function () {
+     return buf[index++];
+   };
+ 
+-  worker.Buf.seekIncoming = function (offset) {
++  context.Buf.seekIncoming = function (offset) {
+     index += offset;
+   };
+ 
+   worker.debug = do_print;
+ 
+   return worker;
+ }
+ 
+ /**
+  * Verify ICCPDUHelper#readICCUCS2String()
+  */
+ add_test(function test_read_icc_ucs2_string() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+ 
+   // 0x80
+   let text = "TEST";
+   helper.writeUCS2String(text);
+   // Also write two unused octets.
+   let ffLen = 2;
+   for (let i = 0; i < ffLen; i++) {
+     helper.writeHexOctet(0xff);
+@@ -71,18 +73,19 @@ add_test(function test_read_icc_ucs2_str
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper#readDiallingNumber
+  */
+ add_test(function test_read_dialling_number() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+   let str = "123456789";
+ 
+   helper.readHexOctet = function () {
+     return 0x81;
+   };
+ 
+   helper.readSwappedNibbleBcdString = function (len) {
+     return str.substring(0, len);
+@@ -96,18 +99,19 @@ add_test(function test_read_dialling_num
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper#read8BitUnpackedToString
+  */
+ add_test(function test_read_8bit_unpacked_to_string() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+   const langTable = PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+   const langShiftTable = PDU_NL_SINGLE_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+ 
+   // Test 1: Read GSM alphabets.
+   // Write alphabets before ESCAPE.
+   for (let i = 0; i < PDU_NL_EXTENDED_ESCAPE; i++) {
+     helper.writeHexOctet(i);
+   }
+@@ -161,18 +165,19 @@ add_test(function test_read_8bit_unpacke
+ 
+ /**
+  * Verify ICCPDUHelper#writeStringTo8BitUnpacked.
+  *
+  * Test writing GSM 8 bit alphabets.
+  */
+ add_test(function test_write_string_to_8bit_unpacked() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+   const langTable = PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+   const langShiftTable = PDU_NL_SINGLE_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+   // Length of trailing 0xff.
+   let ffLen = 2;
+   let str;
+ 
+   // Test 1, write GSM alphabets.
+   iccHelper.writeStringTo8BitUnpacked(langTable.length + ffLen, langTable);
+@@ -207,18 +212,19 @@ add_test(function test_write_string_to_8
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper#writeStringTo8BitUnpacked with maximum octets written.
+  */
+ add_test(function test_write_string_to_8bit_unpacked_with_max_octets_written() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+   const langTable = PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+   const langShiftTable = PDU_NL_SINGLE_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+ 
+   // The maximum of the number of octets that can be written is 3.
+   // Only 3 characters shall be written even the length of the string is 4.
+   iccHelper.writeStringTo8BitUnpacked(3, langTable.substring(0, 4));
+   helper.writeHexOctet(0xff); // dummy octet.
+   for (let i = 0; i < 3; i++) {
+@@ -246,18 +252,19 @@ add_test(function test_write_string_to_8
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper.readAlphaIdentifier
+  */
+ add_test(function test_read_alpha_identifier() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+ 
+   // UCS2: 0x80
+   let text = "TEST";
+   helper.writeHexOctet(0x80);
+   helper.writeUCS2String(text);
+   // Also write two unused octets.
+   let ffLen = 2;
+   for (let i = 0; i < ffLen; i++) {
+@@ -290,18 +297,19 @@ add_test(function test_read_alpha_identi
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper.writeAlphaIdentifier
+  */
+ add_test(function test_write_alpha_identifier() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+   // Length of trailing 0xff.
+   let ffLen = 2;
+ 
+   // Removal
+   iccHelper.writeAlphaIdentifier(10, null);
+   do_check_eq(iccHelper.readAlphaIdentifier(10), "");
+ 
+   // GSM 8 bit
+@@ -336,19 +344,20 @@ add_test(function test_write_alpha_ident
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper.readAlphaIdDiallingNumber
+  */
+ add_test(function test_read_alpha_id_dialling_number() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
++  let buf = context.Buf;
+   const recordSize = 32;
+ 
+   function testReadAlphaIdDiallingNumber(contact) {
+     iccHelper.readAlphaIdentifier = function () {
+       return contact.alphaId;
+     };
+ 
+     iccHelper.readNumberWithLength = function () {
+@@ -376,17 +385,18 @@ add_test(function test_read_alpha_id_dia
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper.writeAlphaIdDiallingNumber
+  */
+ add_test(function test_write_alpha_id_dialling_number() {
+   let worker = newUint8Worker();
+-  let helper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.ICCPDUHelper;
+   const recordSize = 32;
+ 
+   // Write a normal contact.
+   let contactW = {
+     alphaId: "Mozilla",
+     number: "1234567890"
+   };
+   helper.writeAlphaIdDiallingNumber(recordSize, contactW.alphaId,
+@@ -438,17 +448,18 @@ add_test(function test_write_alpha_id_di
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper.writeDiallingNumber
+  */
+ add_test(function test_write_dialling_number() {
+   let worker = newUint8Worker();
+-  let helper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.ICCPDUHelper;
+ 
+   // with +
+   let number = "+123456";
+   let len = 4;
+   helper.writeDiallingNumber(number);
+   do_check_eq(helper.readDiallingNumber(len), number);
+ 
+   // without +
+@@ -465,18 +476,19 @@ add_test(function test_write_dialling_nu
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper.readNumberWithLength
+  */
+ add_test(function test_read_number_with_length() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+   let number = "123456789";
+ 
+   iccHelper.readDiallingNumber = function (numLen) {
+     return number.substring(0, numLen);
+   };
+ 
+   helper.writeHexOctet(number.length + 1);
+   helper.writeHexOctet(PDU_TOA_ISDN);
+@@ -488,18 +500,19 @@ add_test(function test_read_number_with_
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCPDUHelper.writeNumberWithLength
+  */
+ add_test(function test_write_number_with_length() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+ 
+   function test(number, expectedNumber) {
+     expectedNumber = expectedNumber || number;
+     iccHelper.writeNumberWithLength(number);
+     let numLen = helper.readHexOctet();
+     do_check_eq(expectedNumber, iccHelper.readDiallingNumber(numLen));
+     for (let i = 0; i < (ADN_MAX_BCD_NUMBER_BYTES - numLen); i++) {
+       do_check_eq(0xff, helper.readHexOctet());
+@@ -532,17 +545,18 @@ add_test(function test_write_number_with
+   run_next_test();
+ });
+ 
+ /**
+  * Verify GsmPDUHelper.writeTimestamp
+  */
+ add_test(function test_write_timestamp() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
+ 
+   // current date
+   let dateInput = new Date();
+   let dateOutput = new Date();
+   helper.writeTimestamp(dateInput);
+   dateOutput.setTime(helper.readTimestamp());
+ 
+   do_check_eq(dateInput.getFullYear(), dateOutput.getFullYear());
+@@ -571,17 +585,18 @@ add_test(function test_write_timestamp()
+   run_next_test();
+ });
+ 
+ /**
+  * Verify GsmPDUHelper.octectToBCD and GsmPDUHelper.BCDToOctet
+  */
+ add_test(function test_octect_BCD() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
+ 
+   // 23
+   let number = 23;
+   let octet = helper.BCDToOctet(number);
+   do_check_eq(helper.octetToBCD(octet), number);
+ 
+   // 56
+   number = 56;
+@@ -601,93 +616,98 @@ add_test(function test_octect_BCD() {
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCUtilsHelper.isICCServiceAvailable.
+  */
+ add_test(function test_is_icc_service_available() {
+   let worker = newUint8Worker();
+-  let ICCUtilsHelper = worker.ICCUtilsHelper;
++  let context = worker.ContextPool._contexts[0];
++  let ICCUtilsHelper = context.ICCUtilsHelper;
++  let RIL = context.RIL;
+ 
+   function test_table(sst, geckoService, simEnabled, usimEnabled) {
+-    worker.RIL.iccInfoPrivate.sst = sst;
+-    worker.RIL.appType = CARD_APPTYPE_SIM;
++    RIL.iccInfoPrivate.sst = sst;
++    RIL.appType = CARD_APPTYPE_SIM;
+     do_check_eq(ICCUtilsHelper.isICCServiceAvailable(geckoService), simEnabled);
+-    worker.RIL.appType = CARD_APPTYPE_USIM;
++    RIL.appType = CARD_APPTYPE_USIM;
+     do_check_eq(ICCUtilsHelper.isICCServiceAvailable(geckoService), usimEnabled);
+   }
+ 
+   test_table([0x08], "ADN", true, false);
+   test_table([0x08], "FDN", false, false);
+   test_table([0x08], "SDN", false, true);
+ 
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCUtilsHelper.isGsm8BitAlphabet
+  */
+ add_test(function test_is_gsm_8bit_alphabet() {
+   let worker = newUint8Worker();
+-  let ICCUtilsHelper = worker.ICCUtilsHelper;
++  let context = worker.ContextPool._contexts[0];
++  let ICCUtilsHelper = context.ICCUtilsHelper;
+   const langTable = PDU_NL_LOCKING_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+   const langShiftTable = PDU_NL_SINGLE_SHIFT_TABLES[PDU_NL_IDENTIFIER_DEFAULT];
+ 
+   do_check_eq(ICCUtilsHelper.isGsm8BitAlphabet(langTable), true);
+   do_check_eq(ICCUtilsHelper.isGsm8BitAlphabet(langShiftTable), true);
+   do_check_eq(ICCUtilsHelper.isGsm8BitAlphabet("\uaaaa"), false);
+ 
+   run_next_test();
+ });
+ 
+ /**
+  * Verify RIL.iccGetCardLockState("fdn")
+  */
+ add_test(function test_icc_get_card_lock_state_fdn() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++  let buf = context.Buf;
+ 
+   buf.sendParcel = function () {
+     // Request Type.
+     do_check_eq(this.readInt32(), REQUEST_QUERY_FACILITY_LOCK)
+ 
+     // Token : we don't care.
+     this.readInt32();
+ 
+     // String Array Length.
+-    do_check_eq(this.readInt32(), worker.RILQUIRKS_V5_LEGACY ? 3 : 4);
++    do_check_eq(this.readInt32(), ril.v5Legacy ? 3 : 4);
+ 
+     // Facility.
+     do_check_eq(this.readString(), ICC_CB_FACILITY_FDN);
+ 
+     // Password.
+     do_check_eq(this.readString(), "");
+ 
+     // Service class.
+     do_check_eq(this.readString(), (ICC_SERVICE_CLASS_VOICE |
+                                     ICC_SERVICE_CLASS_DATA  |
+                                     ICC_SERVICE_CLASS_FAX).toString());
+ 
+-    if (!worker.RILQUIRKS_V5_LEGACY) {
++    if (!ril.v5Legacy) {
+       // AID. Ignore because it's from modem.
+       this.readInt32();
+     }
+ 
+     run_next_test();
+   };
+ 
+   ril.iccGetCardLockState({lockType: "fdn"});
+ });
+ 
+ add_test(function test_get_network_name_from_icc() {
+   let worker = newUint8Worker();
+-  let RIL = worker.RIL;
+-  let ICCUtilsHelper = worker.ICCUtilsHelper;
++  let context = worker.ContextPool._contexts[0];
++  let RIL = context.RIL;
++  let ICCUtilsHelper = context.ICCUtilsHelper;
+ 
+   function testGetNetworkNameFromICC(operatorData, expectedResult) {
+     let result = ICCUtilsHelper.getNetworkNameFromICC(operatorData.mcc,
+                                                       operatorData.mnc,
+                                                       operatorData.lac);
+ 
+     if (expectedResult == null) {
+       do_check_eq(result, expectedResult);
+@@ -775,18 +795,19 @@ add_test(function test_get_network_name_
+ add_test(function test_path_id_for_spid_and_spn() {
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }});
+-  let RIL = worker.RIL;
+-  let ICCFileHelper = worker.ICCFileHelper;
++  let context = worker.ContextPool._contexts[0];
++  let RIL = context.RIL;
++  let ICCFileHelper = context.ICCFileHelper;
+ 
+   // Test SIM
+   RIL.appType = CARD_APPTYPE_SIM;
+   do_check_eq(ICCFileHelper.getEFPath(ICC_EF_SPDI),
+               EF_PATH_MF_SIM + EF_PATH_DF_GSM);
+   do_check_eq(ICCFileHelper.getEFPath(ICC_EF_SPN),
+               EF_PATH_MF_SIM + EF_PATH_DF_GSM);
+ 
+@@ -799,17 +820,18 @@ add_test(function test_path_id_for_spid_
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCUtilsHelper.parsePbrTlvs
+  */
+ add_test(function test_parse_pbr_tlvs() {
+   let worker = newUint8Worker();
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
+ 
+   let pbrTlvs = [
+     {tag: ICC_USIM_TYPE1_TAG,
+      length: 0x0F,
+      value: [{tag: ICC_USIM_EFADN_TAG,
+               length: 0x03,
+               value: [0x4F, 0x3A, 0x02]},
+              {tag: ICC_USIM_EFIAP_TAG,
+@@ -837,17 +859,17 @@ add_test(function test_parse_pbr_tlvs() 
+               length: 0x03,
+               value: [0x4F, 0x3D, 0x0A]},
+              {tag: ICC_USIM_EFEXT1_TAG,
+               length: 0x03,
+               value: [0x4F, 0x4A, 0x03]}]
+     },
+   ];
+ 
+-  let pbr = worker.ICCUtilsHelper.parsePbrTlvs(pbrTlvs);
++  let pbr = context.ICCUtilsHelper.parsePbrTlvs(pbrTlvs);
+   do_check_eq(pbr.adn.fileId, 0x4F3a);
+   do_check_eq(pbr.iap.fileId, 0x4F25);
+   do_check_eq(pbr.pbc.fileId, 0x4F09);
+   do_check_eq(pbr.email.fileId, 0x4F50);
+   do_check_eq(pbr.anr0.fileId, 0x4f11);
+   do_check_eq(pbr.anr1.fileId, 0x4f12);
+   do_check_eq(pbr.ccp1.fileId, 0x4F3D);
+   do_check_eq(pbr.ext1.fileId, 0x4F4A);
+@@ -855,18 +877,19 @@ add_test(function test_parse_pbr_tlvs() 
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCIOHelper.loadLinearFixedEF with recordSize.
+  */
+ add_test(function test_load_linear_fixed_ef() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-  let io = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++  let io = context.ICCIOHelper;
+ 
+   io.getResponse = function fakeGetResponse(options) {
+     // When recordSize is provided, loadLinearFixedEF should call iccIO directly.
+     do_check_true(false);
+     run_next_test();
+   };
+ 
+   ril.iccIO = function fakeIccIO(options) {
+@@ -877,18 +900,19 @@ add_test(function test_load_linear_fixed
+   io.loadLinearFixedEF({recordSize: 0x20});
+ });
+ 
+ /**
+  * Verify ICCIOHelper.loadLinearFixedEF without recordSize.
+  */
+ add_test(function test_load_linear_fixed_ef() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-  let io = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++  let io = context.ICCIOHelper;
+ 
+   io.getResponse = function fakeGetResponse(options) {
+     do_check_true(true);
+     run_next_test();
+   };
+ 
+   ril.iccIO = function fakeIccIO(options) {
+     // When recordSize is not provided, loadLinearFixedEF should call getResponse.
+@@ -899,20 +923,21 @@ add_test(function test_load_linear_fixed
+   io.loadLinearFixedEF({});
+ });
+ 
+ /**
+  * Verify ICCRecordHelper.readPBR
+  */
+ add_test(function test_read_pbr() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let record = worker.ICCRecordHelper;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let record = context.ICCRecordHelper;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+ 
+   io.loadLinearFixedEF = function fakeLoadLinearFixedEF(options) {
+     let pbr_1 = [
+       0xa8, 0x05, 0xc0, 0x03, 0x4f, 0x3a, 0x01
+     ];
+ 
+     // Write data size
+     buf.writeInt32(pbr_1.length * 2);
+@@ -965,20 +990,21 @@ add_test(function test_read_pbr() {
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCRecordHelper.readEmail
+  */
+ add_test(function test_read_email() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let record = worker.ICCRecordHelper;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let record = context.ICCRecordHelper;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+   let recordSize;
+ 
+   io.loadLinearFixedEF = function fakeLoadLinearFixedEF(options)  {
+     let email_1 = [
+       0x65, 0x6D, 0x61, 0x69, 0x6C,
+       0x00, 0x6D, 0x6F, 0x7A, 0x69,
+       0x6C, 0x6C, 0x61, 0x2E, 0x63,
+       0x6F, 0x6D, 0x02, 0x23];
+@@ -1022,30 +1048,31 @@ add_test(function test_read_email() {
+  * Verify ICCRecordHelper.updateEmail
+  */
+ add_test(function test_update_email() {
+   const recordSize = 0x20;
+   const recordNumber = 1;
+   const fileId = 0x4f50;
+   const NUM_TESTS = 2;
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
+-  let ril = worker.RIL;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
++  let ril = context.RIL;
+   ril.appType = CARD_APPTYPE_USIM;
+-  let recordHelper = worker.ICCRecordHelper;
+-  let buf = worker.Buf;
+-  let ioHelper = worker.ICCIOHelper;
++  let recordHelper = context.ICCRecordHelper;
++  let buf = context.Buf;
++  let ioHelper = context.ICCIOHelper;
+   let pbr = {email: {fileId: fileId, fileType: ICC_USIM_TYPE1_TAG},
+              adn: {sfi: 1}};
+   let count = 0;
+ 
+   // Override.
+   ioHelper.updateLinearFixedEF = function (options) {
+-    options.pathId = worker.ICCFileHelper.getEFPath(options.fileId);
++    options.pathId = context.ICCFileHelper.getEFPath(options.fileId);
+     options.command = ICC_COMMAND_UPDATE_RECORD;
+     options.p1 = options.recordNumber;
+     options.p2 = READ_RECORD_ABSOLUTE_MODE;
+     options.p3 = recordSize;
+     ril.iccIO(options);
+   };
+ 
+   function do_test(pbr, expectedEmail, expectedAdnRecordId) {
+@@ -1088,17 +1115,17 @@ add_test(function test_update_email() {
+         do_check_eq(pduHelper.readHexOctet(), expectedAdnRecordId);
+       }
+       this.readStringDelimiter(strLen);
+       do_check_eq(email, expectedEmail);
+ 
+       // pin2.
+       do_check_eq(this.readString(), null);
+ 
+-      if (!worker.RILQUIRKS_V5_LEGACY) {
++      if (!ril.v5Legacy) {
+         // AID. Ignore because it's from modem.
+         this.readInt32();
+       }
+ 
+       if (count == NUM_TESTS) {
+         run_next_test();
+       }
+     };
+@@ -1110,20 +1137,21 @@ add_test(function test_update_email() {
+   do_test(pbr, "test@mail.com", 1);
+ });
+ 
+ /**
+  * Verify ICCRecordHelper.readANR
+  */
+ add_test(function test_read_anr() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let record = worker.ICCRecordHelper;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let record = context.ICCRecordHelper;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+   let recordSize;
+ 
+   io.loadLinearFixedEF = function fakeLoadLinearFixedEF(options)  {
+     let anr_1 = [
+       0x01, 0x05, 0x81, 0x10, 0x32,
+       0x54, 0xF6, 0xFF, 0xFF];
+ 
+     // Write data size
+@@ -1164,30 +1192,31 @@ add_test(function test_read_anr() {
+  * Verify ICCRecordHelper.updateANR
+  */
+ add_test(function test_update_anr() {
+   const recordSize = 0x20;
+   const recordNumber = 1;
+   const fileId = 0x4f11;
+   const NUM_TESTS = 2;
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
+-  let ril = worker.RIL;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
++  let ril = context.RIL;
+   ril.appType = CARD_APPTYPE_USIM;
+-  let recordHelper = worker.ICCRecordHelper;
+-  let buf = worker.Buf;
+-  let ioHelper = worker.ICCIOHelper;
++  let recordHelper = context.ICCRecordHelper;
++  let buf = context.Buf;
++  let ioHelper = context.ICCIOHelper;
+   let pbr = {anr0: {fileId: fileId, fileType: ICC_USIM_TYPE1_TAG},
+              adn: {sfi: 1}};
+   let count = 0;
+ 
+   // Override.
+   ioHelper.updateLinearFixedEF = function (options) {
+-    options.pathId = worker.ICCFileHelper.getEFPath(options.fileId);
++    options.pathId = context.ICCFileHelper.getEFPath(options.fileId);
+     options.command = ICC_COMMAND_UPDATE_RECORD;
+     options.p1 = options.recordNumber;
+     options.p2 = READ_RECORD_ABSOLUTE_MODE;
+     options.p3 = recordSize;
+     ril.iccIO(options);
+   };
+ 
+   function do_test(pbr, expectedANR, expectedAdnRecordId) {
+@@ -1232,17 +1261,17 @@ add_test(function test_update_anr() {
+         do_check_eq(pduHelper.readHexOctet(), pbr.adn.sfi);
+         do_check_eq(pduHelper.readHexOctet(), expectedAdnRecordId);
+       }
+       this.readStringDelimiter(strLen);
+ 
+       // pin2.
+       do_check_eq(this.readString(), null);
+ 
+-      if (!worker.RILQUIRKS_V5_LEGACY) {
++      if (!ril.v5Legacy) {
+         // AID. Ignore because it's from modem.
+         this.readInt32();
+       }
+ 
+       if (count == NUM_TESTS) {
+         run_next_test();
+       }
+     };
+@@ -1254,20 +1283,21 @@ add_test(function test_update_anr() {
+   do_test(pbr, "123456789", 1);
+ });
+ 
+ /**
+  * Verify ICCRecordHelper.readIAP
+  */
+ add_test(function test_read_iap() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let record = worker.ICCRecordHelper;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let record = context.ICCRecordHelper;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+   let recordSize;
+ 
+   io.loadLinearFixedEF = function fakeLoadLinearFixedEF(options)  {
+     let iap_1 = [0x01, 0x02];
+ 
+     // Write data size/
+     buf.writeInt32(iap_1.length * 2);
+ 
+@@ -1312,27 +1342,28 @@ add_test(function test_read_iap() {
+ /**
+  * Verify ICCRecordHelper.updateIAP
+  */
+ add_test(function test_update_iap() {
+   const recordSize = 2;
+   const recordNumber = 1;
+   const fileId = 0x4f17;
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let ril = worker.RIL;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let ril = context.RIL;
+   ril.appType = CARD_APPTYPE_USIM;
+-  let recordHelper = worker.ICCRecordHelper;
+-  let buf = worker.Buf;
+-  let ioHelper = worker.ICCIOHelper;
++  let recordHelper = context.ICCRecordHelper;
++  let buf = context.Buf;
++  let ioHelper = context.ICCIOHelper;
+   let count = 0;
+ 
+   // Override.
+   ioHelper.updateLinearFixedEF = function (options) {
+-    options.pathId = worker.ICCFileHelper.getEFPath(options.fileId);
++    options.pathId = context.ICCFileHelper.getEFPath(options.fileId);
+     options.command = ICC_COMMAND_UPDATE_RECORD;
+     options.p1 = options.recordNumber;
+     options.p2 = READ_RECORD_ABSOLUTE_MODE;
+     options.p3 = recordSize;
+     ril.iccIO(options);
+   };
+ 
+   function do_test(expectedIAP) {
+@@ -1367,17 +1398,17 @@ add_test(function test_update_iap() {
+       for (let i = 0; i < recordSize; i++) {
+         do_check_eq(expectedIAP[i], pduHelper.readHexOctet());
+       }
+       this.readStringDelimiter(strLen);
+ 
+       // pin2.
+       do_check_eq(this.readString(), null);
+ 
+-      if (!worker.RILQUIRKS_V5_LEGACY) {
++      if (!ril.v5Legacy) {
+         // AID. Ignore because it's from modem.
+         this.readInt32();
+       }
+ 
+       run_next_test();
+     };
+     recordHelper.updateIAP(fileId, recordNumber, expectedIAP);
+   }
+@@ -1385,29 +1416,30 @@ add_test(function test_update_iap() {
+   do_test([1, 2]);
+ });
+ 
+ /**
+  * Verify ICCRecordHelper.updateADNLike.
+  */
+ add_test(function test_update_adn_like() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-  let record = worker.ICCRecordHelper;
+-  let io = worker.ICCIOHelper;
+-  let pdu = worker.ICCPDUHelper;
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++  let record = context.ICCRecordHelper;
++  let io = context.ICCIOHelper;
++  let pdu = context.ICCPDUHelper;
++  let buf = context.Buf;
+ 
+   ril.appType = CARD_APPTYPE_SIM;
+   const recordSize = 0x20;
+   let fileId;
+ 
+   // Override.
+   io.updateLinearFixedEF = function (options) {
+-    options.pathId = worker.ICCFileHelper.getEFPath(options.fileId);
++    options.pathId = context.ICCFileHelper.getEFPath(options.fileId);
+     options.command = ICC_COMMAND_UPDATE_RECORD;
+     options.p1 = options.recordNumber;
+     options.p2 = READ_RECORD_ABSOLUTE_MODE;
+     options.p3 = recordSize;
+     ril.iccIO(options);
+   };
+ 
+   buf.sendParcel = function () {
+@@ -1442,17 +1474,17 @@ add_test(function test_update_adn_like()
+ 
+     // pin2.
+     if (fileId == ICC_EF_ADN) {
+       do_check_eq(this.readString(), null);
+     } else {
+       do_check_eq(this.readString(), "1111");
+     }
+ 
+-    if (!worker.RILQUIRKS_V5_LEGACY) {
++    if (!ril.v5Legacy) {
+       // AID. Ignore because it's from modem.
+       this.readInt32();
+     }
+ 
+     if (fileId == ICC_EF_FDN) {
+       run_next_test();
+     }
+   };
+@@ -1467,20 +1499,21 @@ add_test(function test_update_adn_like()
+                        "1111");
+ });
+ 
+ /**
+  * Verify ICCRecordHelper.findFreeRecordId.
+  */
+ add_test(function test_find_free_record_id() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let recordHelper = worker.ICCRecordHelper;
+-  let buf = worker.Buf;
+-  let io  = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let recordHelper = context.ICCRecordHelper;
++  let buf = context.Buf;
++  let io  = context.ICCIOHelper;
+ 
+   function writeRecord (record) {
+     // Write data size
+     buf.writeInt32(record.length * 2);
+ 
+     for (let i = 0; i < record.length; i++) {
+       pduHelper.writeHexOctet(record[i]);
+     }
+@@ -1524,23 +1557,25 @@ add_test(function test_find_free_record_
+     }.bind(this));
+ });
+ 
+ /**
+  * Verify ICCContactHelper.readICCContacts
+  */
+ add_test(function test_read_icc_contacts() {
+   let worker = newUint8Worker();
+-  let record = worker.ICCRecordHelper;
+-  let contactHelper = worker.ICCContactHelper;
++  let context = worker.ContextPool._contexts[0];
++  let record = context.ICCRecordHelper;
++  let contactHelper = context.ICCContactHelper;
++  let ril = context.RIL;
+ 
+   function do_test(aSimType, aContactType, aExpectedContact, aEnhancedPhoneBook) {
+-    worker.RIL.appType = aSimType;
+-    worker.RIL._isCdma = (aSimType === CARD_APPTYPE_RUIM);
+-    worker.RIL.iccInfoPrivate.cst = (aEnhancedPhoneBook) ?
++    ril.appType = aSimType;
++    ril._isCdma = (aSimType === CARD_APPTYPE_RUIM);
++    ril.iccInfoPrivate.cst = (aEnhancedPhoneBook) ?
+                                     [0x0, 0x0C, 0x0, 0x0, 0x0]:
+                                     [0x0, 0x00, 0x0, 0x0, 0x0];
+ 
+     // Override some functions to test.
+     contactHelper.getContactFieldRecordId = function (pbr, contact, field, onsuccess, onerror) {
+       onsuccess(1);
+     };
+ 
+@@ -1635,25 +1670,26 @@ add_test(function test_update_icc_contac
+   const ADN_SFI         = 1;
+   const IAP_FILE_ID     = 0x4f17;
+   const EMAIL_FILE_ID   = 0x4f50;
+   const EMAIL_RECORD_ID = 20;
+   const ANR0_FILE_ID    = 0x4f11;
+   const ANR0_RECORD_ID  = 30;
+ 
+   let worker = newUint8Worker();
+-  let recordHelper = worker.ICCRecordHelper;
+-  let contactHelper = worker.ICCContactHelper;
++  let context = worker.ContextPool._contexts[0];
++  let recordHelper = context.ICCRecordHelper;
++  let contactHelper = context.ICCContactHelper;
++  let ril = context.RIL;
+ 
+   function do_test(aSimType, aContactType, aContact, aPin2, aFileType, aEnhancedPhoneBook) {
+-    worker.RIL.appType = aSimType;
+-    worker.RIL._isCdma = (aSimType === CARD_APPTYPE_RUIM);
+-    worker.RIL.iccInfoPrivate.cst = (aEnhancedPhoneBook) ?
+-                                    [0x0, 0x0C, 0x0, 0x0, 0x0]:
+-                                    [0x0, 0x00, 0x0, 0x0, 0x0];
++    ril.appType = aSimType;
++    ril._isCdma = (aSimType === CARD_APPTYPE_RUIM);
++    ril.iccInfoPrivate.cst = (aEnhancedPhoneBook) ? [0x0, 0x0C, 0x0, 0x0, 0x0]
++                                                  : [0x0, 0x00, 0x0, 0x0, 0x0];
+ 
+     recordHelper.readPBR = function (onsuccess, onerror) {
+       if (aFileType === ICC_USIM_TYPE1_TAG) {
+         onsuccess([{
+           adn:   {fileId: ICC_EF_ADN},
+           email: {fileId: EMAIL_FILE_ID,
+                   fileType: ICC_USIM_TYPE1_TAG},
+           anr0:  {fileId: ANR0_FILE_ID,
+@@ -1788,18 +1824,19 @@ add_test(function test_update_icc_contac
+   const ADN_RECORD_ID   = 100;
+   const IAP_FILE_ID     = 0x4f17;
+   const EMAIL_FILE_ID   = 0x4f50;
+   const EMAIL_RECORD_ID = 20;
+   const ANR0_FILE_ID    = 0x4f11;
+   const ANR0_RECORD_ID  = 30;
+ 
+   let worker = newUint8Worker();
+-  let recordHelper = worker.ICCRecordHelper;
+-  let contactHelper = worker.ICCContactHelper;
++  let context = worker.ContextPool._contexts[0];
++  let recordHelper = context.ICCRecordHelper;
++  let contactHelper = context.ICCContactHelper;
+ 
+   recordHelper.updateADNLike = function(fileId, contact, pin2, onsuccess, onerror) {
+     onsuccess();
+   };
+ 
+   let contact = {
+     pbrIndex: 0,
+     recordId: ADN_RECORD_ID,
+@@ -1861,18 +1898,19 @@ add_test(function test_update_icc_contac
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCContactHelper.findFreeICCContact in SIM
+  */
+ add_test(function test_find_free_icc_contact_sim() {
+   let worker = newUint8Worker();
+-  let recordHelper = worker.ICCRecordHelper;
+-  let contactHelper = worker.ICCContactHelper;
++  let context = worker.ContextPool._contexts[0];
++  let recordHelper = context.ICCRecordHelper;
++  let contactHelper = context.ICCContactHelper;
+   // Correct record Id starts with 1, so put a null element at index 0.
+   let records = [null];
+   const MAX_RECORDS = 3;
+   const PBR_INDEX = 0;
+ 
+   recordHelper.findFreeRecordId = function (fileId, onsuccess, onerror) {
+     if (records.length > MAX_RECORDS) {
+       onerror("No free record found.");
+@@ -1911,18 +1949,19 @@ add_test(function test_find_free_icc_con
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ICCContactHelper.findFreeICCContact in USIM
+  */
+ add_test(function test_find_free_icc_contact_usim() {
+   let worker = newUint8Worker();
+-  let recordHelper = worker.ICCRecordHelper;
+-  let contactHelper = worker.ICCContactHelper;
++  let context = worker.ContextPool._contexts[0];
++  let recordHelper = context.ICCRecordHelper;
++  let contactHelper = context.ICCContactHelper;
+   const ADN1_FILE_ID = 0x6f3a;
+   const ADN2_FILE_ID = 0x6f3b;
+   const MAX_RECORDS = 3;
+ 
+   // The adn in the first phonebook set has already two records, which means
+   // only 1 free record remained.
+   let pbrs = [{adn: {fileId: ADN1_FILE_ID, records: [null, {}, {}]}},
+               {adn: {fileId: ADN2_FILE_ID, records: [null]}}];
+@@ -1963,17 +2002,18 @@ add_test(function test_find_free_icc_con
+   run_next_test();
+ });
+ 
+ /**
+  * Test error message returned in onerror for readICCContacts.
+  */
+ add_test(function test_error_message_read_icc_contact () {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
+ 
+   function do_test(options, expectedErrorMsg) {
+     ril.sendChromeMessage = function (message) {
+       do_check_eq(message.errorMsg, expectedErrorMsg);
+     }
+     ril.readICCContacts(options);
+   }
+ 
+@@ -1992,17 +2032,18 @@ add_test(function test_error_message_rea
+   run_next_test();
+ });
+ 
+ /**
+  * Test error message returned in onerror for updateICCContact.
+  */
+ add_test(function test_error_message_update_icc_contact() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
+ 
+   const ICCID = "123456789";
+   ril.iccInfo.iccid = ICCID;
+ 
+   function do_test(options, expectedErrorMsg) {
+     ril.sendChromeMessage = function (message) {
+       do_check_eq(message.errorMsg, expectedErrorMsg);
+     }
+@@ -2018,22 +2059,22 @@ add_test(function test_error_message_upd
+   // Error 3, specifying a non-supported contactType.
+   ril.appType = CARD_APPTYPE_USIM;
+   do_test({contactType: "sdn", contact: {}}, CONTACT_ERR_CONTACT_TYPE_NOT_SUPPORTED);
+ 
+   // Error 4, without supplying pin2.
+   do_test({contactType: "fdn", contact: {contactId: ICCID + "1"}}, GECKO_ERROR_SIM_PIN2);
+ 
+   // Error 5, No free record found in EF_ADN.
+-  let record = worker.ICCRecordHelper;
++  let record = context.ICCRecordHelper;
+   record.readPBR = function (onsuccess, onerror) {
+     onsuccess([{adn: {fileId: 0x4f3a}}]);
+   };
+ 
+-  let io = worker.ICCIOHelper;
++  let io = context.ICCIOHelper;
+   io.loadLinearFixedEF = function (options) {
+     options.totalRecords = 1;
+     options.p1 = 1;
+     options.callback(options);
+   };
+ 
+   do_test({contactType: "adn", contact: {}}, CONTACT_ERR_NO_FREE_RECORD_FOUND);
+ 
+@@ -2058,19 +2099,20 @@ add_test(function test_error_message_upd
+   do_test({contactType: "adn", contact: {contactId: ICCID + "1"}},
+           CONTACT_ERR_CANNOT_ACCESS_PHONEBOOK);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_personalization_state() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-
+-  worker.ICCRecordHelper.readICCID = function fakeReadICCID() {};
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++
++  context.ICCRecordHelper.readICCID = function fakeReadICCID() {};
+ 
+   function testPersonalization(cardPersoState, geckoCardState) {
+     let iccStatus = {
+       cardState: CARD_STATE_PRESENT,
+       gsmUmtsSubscriptionAppIndex: 0,
+       apps: [
+         {
+           app_state: CARD_APPSTATE_SUBSCRIPTION_PERSO,
+@@ -2100,19 +2142,20 @@ add_test(function test_personalization_s
+   run_next_test();
+ });
+ 
+ /**
+  * Verify SIM app_state in _processICCStatus
+  */
+ add_test(function test_card_app_state() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-
+-  worker.ICCRecordHelper.readICCID = function fakeReadICCID() {};
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++
++  context.ICCRecordHelper.readICCID = function fakeReadICCID() {};
+ 
+   function testCardAppState(cardAppState, geckoCardState) {
+     let iccStatus = {
+       cardState: CARD_STATE_PRESENT,
+       gsmUmtsSubscriptionAppIndex: 0,
+       apps: [
+       {
+         app_state: cardAppState
+@@ -2139,19 +2182,20 @@ add_test(function test_card_app_state() 
+   run_next_test();
+ });
+ 
+ /**
+  * Verify permanent blocked for ICC.
+  */
+ add_test(function test_icc_permanent_blocked() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-
+-  worker.ICCRecordHelper.readICCID = function fakeReadICCID() {};
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++
++  context.ICCRecordHelper.readICCID = function fakeReadICCID() {};
+ 
+   function testPermanentBlocked(pin1_replaced, universalPINState, pin1) {
+     let iccStatus = {
+       cardState: CARD_STATE_PRESENT,
+       gsmUmtsSubscriptionAppIndex: 0,
+       universalPINState: universalPINState,
+       apps: [
+       {
+@@ -2177,21 +2221,22 @@ add_test(function test_icc_permanent_blo
+   run_next_test();
+ });
+ 
+ /**
+  * Verify iccSetCardLock - Facility Lock.
+  */
+ add_test(function test_set_icc_card_lock_facility_lock() {
+   let worker = newUint8Worker();
+-  worker.RILQUIRKS_V5_LEGACY = false;
++  let context = worker.ContextPool._contexts[0];
+   let aid = "123456789";
+-  let ril = worker.RIL;
++  let ril = context.RIL;
+   ril.aid = aid;
+-  let buf = worker.Buf;
++  ril.v5Legacy = false;
++  let buf = context.Buf;
+ 
+   let GECKO_CARDLOCK_TO_FACILITIY_LOCK = {};
+   GECKO_CARDLOCK_TO_FACILITIY_LOCK[GECKO_CARDLOCK_PIN] = ICC_CB_FACILITY_SIM;
+   GECKO_CARDLOCK_TO_FACILITIY_LOCK[GECKO_CARDLOCK_FDN] = ICC_CB_FACILITY_FDN;
+ 
+   let GECKO_CARDLOCK_TO_PASSWORD_TYPE = {};
+   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_PIN] = "pin";
+   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_FDN] = "pin2";
+@@ -2238,18 +2283,19 @@ add_test(function test_set_icc_card_lock
+   run_next_test();
+ });
+ 
+ /**
+  * Verify iccUnlockCardLock.
+  */
+ add_test(function test_unlock_card_lock_corporateLocked() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++  let buf = context.Buf;
+   const pin = "12345678";
+   const puk = "12345678";
+ 
+   let GECKO_CARDLOCK_TO_PASSWORD_TYPE = {};
+   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK] = "pin";
+   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_CCK] = "pin";
+   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_SPCK] = "pin";
+   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK_PUK] = "puk";
+@@ -2287,17 +2333,18 @@ add_test(function test_unlock_card_lock_
+   run_next_test();
+ });
+ 
+ /**
+  * Verify MCC and MNC parsing
+  */
+ add_test(function test_mcc_mnc_parsing() {
+   let worker = newUint8Worker();
+-  let helper = worker.ICCUtilsHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.ICCUtilsHelper;
+ 
+   function do_test(imsi, mncLength, expectedMcc, expectedMnc) {
+     let result = helper.parseMccMncFromImsi(imsi, mncLength);
+ 
+     if (!imsi) {
+       do_check_eq(result, null);
+       return;
+     }
+@@ -2322,21 +2369,22 @@ add_test(function test_mcc_mnc_parsing()
+   run_next_test();
+  });
+ 
+  /**
+   * Verify reading EF_AD and parsing MCC/MNC
+   */
+ add_test(function test_reading_ad_and_parsing_mcc_mnc() {
+   let worker = newUint8Worker();
+-  let record = worker.SimRecordHelper;
+-  let helper = worker.GsmPDUHelper;
+-  let ril    = worker.RIL;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let record = context.SimRecordHelper;
++  let helper = context.GsmPDUHelper;
++  let ril    = context.RIL;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+ 
+   function do_test(mncLengthInEf, imsi, expectedMcc, expectedMnc) {
+     ril.iccInfoPrivate.imsi = imsi;
+ 
+     io.loadTransparentEF = function fakeLoadTransparentEF(options) {
+       let ad = [0x00, 0x00, 0x00];
+       if (mncLengthInEf) {
+         ad.push(mncLengthInEf);
+@@ -2369,21 +2417,22 @@ add_test(function test_reading_ad_and_pa
+   do_test(undefined, "310260542718417", "310", "260");
+   do_test(0x02,      "310260542718417", "310", "26" );
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_reading_optional_efs() {
+   let worker = newUint8Worker();
+-  let record = worker.SimRecordHelper;
+-  let gsmPdu = worker.GsmPDUHelper;
+-  let ril    = worker.RIL;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let record = context.SimRecordHelper;
++  let gsmPdu = context.GsmPDUHelper;
++  let ril    = context.RIL;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+ 
+   function buildSST(supportedEf) {
+     let sst = [];
+     let len = supportedEf.length;
+     for (let i = 0; i < len; i++) {
+       let index, bitmask, iccService;
+       if (ril.appType === CARD_APPTYPE_SIM) {
+         iccService = GECKO_ICC_SERVICES.sim[supportedEf[i]];
+@@ -2455,19 +2504,20 @@ add_test(function test_reading_optional_
+   run_next_test();
+ });
+ 
+ /**
+  * Verify fetchSimRecords.
+  */
+ add_test(function test_fetch_sim_recodes() {
+   let worker = newWorker();
+-  let RIL = worker.RIL;
+-  let iccRecord = worker.ICCRecordHelper;
+-  let simRecord = worker.SimRecordHelper;
++  let context = worker.ContextPool._contexts[0];
++  let RIL = context.RIL;
++  let iccRecord = context.ICCRecordHelper;
++  let simRecord = context.SimRecordHelper;
+ 
+   function testFetchSimRecordes(expectCalled) {
+     let ifCalled = [];
+ 
+     RIL.getIMSI = function () {
+       ifCalled.push("getIMSI");
+     };
+ 
+@@ -2492,20 +2542,21 @@ add_test(function test_fetch_sim_recodes
+   let expectCalled = ["getIMSI", "readAD", "readSST"];
+   testFetchSimRecordes(expectCalled);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_fetch_icc_recodes() {
+   let worker = newWorker();
+-  let RIL = worker.RIL;
+-  let iccRecord = worker.ICCRecordHelper;
+-  let simRecord = worker.SimRecordHelper;
+-  let ruimRecord = worker.RuimRecordHelper;
++  let context = worker.ContextPool._contexts[0];
++  let RIL = context.RIL;
++  let iccRecord = context.ICCRecordHelper;
++  let simRecord = context.SimRecordHelper;
++  let ruimRecord = context.RuimRecordHelper;
+   let fetchTag = 0x00;
+ 
+   simRecord.fetchSimRecords = function () {
+     fetchTag = 0x01;
+   };
+ 
+   ruimRecord.fetchRuimRecords = function () {
+     fetchTag = 0x02;
+@@ -2527,18 +2578,19 @@ add_test(function test_fetch_icc_recodes
+ });
+ 
+ // Test ICC_COMMAND_GET_RESPONSE with FCP template format.
+ /**
+  * Verify transparent structure with FCP template format.
+  */
+ add_test(function test_fcp_template_for_transparent_structure() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
+ 
+   let tag_test = [
+     0x62,
+     0x22,
+     0x82, 0x02, 0x41, 0x21,
+     0x83, 0x02, 0x2F, 0xE2,
+     0xA5, 0x09, 0xC1, 0x04, 0x40, 0x0F, 0xF5, 0x55, 0x92, 0x01, 0x00,
+     0x8A, 0x01, 0x05,
+@@ -2564,18 +2616,19 @@ add_test(function test_fcp_template_for_
+   run_next_test();
+ });
+ 
+ /**
+  * Verify linear fixed structure with FCP template format.
+  */
+ add_test(function test_fcp_template_for_linear_fixed_structure() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
+ 
+   let tag_test = [
+     0x62,
+     0x1E,
+     0x82, 0x05, 0x42, 0x21, 0x00, 0x1A, 0x01,
+     0x83, 0x02, 0x6F, 0x40,
+     0xA5, 0x03, 0x92, 0x01, 0x00,
+     0x8A, 0x01, 0x07,
+@@ -2600,19 +2653,20 @@ add_test(function test_fcp_template_for_
+   tlv = berHelper.searchForNextTag(BER_FCP_FILE_SIZE_DATA_TAG, iter);
+   do_check_eq(tlv.value.fileSizeData, 0x1A);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_icc_io_get_response_for_transparent_structure() {
+   let worker = newUint8Worker();
+-  let buf = worker.Buf;
+-  let iccioHelper = worker.ICCIOHelper;
+-  let pduHelper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let iccioHelper = context.ICCIOHelper;
++  let pduHelper = context.GsmPDUHelper;
+ 
+   let responseArray = [
+     // SIM response.
+     [0x00, 0x00, 0x00, 0x0A, 0x2F, 0xE2, 0x04, 0x00, 0x0A, 0xA0, 0xAA, 0x00,
+      0x02, 0x00, 0x00],
+     // USIM response.
+     [0x62, 0x22, 0x82, 0x02, 0x41, 0x21, 0x83, 0x02, 0x2F, 0xE2, 0xA5, 0x09,
+      0xC1, 0x04, 0x40, 0x0F, 0xF5, 0x55, 0x92, 0x01, 0x00, 0x8A, 0x01, 0x05,
+@@ -2634,19 +2688,20 @@ add_test(function test_icc_io_get_respon
+     do_check_eq(options.fileSize, 0x0A);
+   }
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_icc_io_get_response_for_linear_fixed_structure() {
+   let worker = newUint8Worker();
+-  let buf = worker.Buf;
+-  let iccioHelper = worker.ICCIOHelper;
+-  let pduHelper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let iccioHelper = context.ICCIOHelper;
++  let pduHelper = context.GsmPDUHelper;
+ 
+   let responseArray = [
+     // SIM response.
+     [0x00, 0x00, 0x00, 0x1A, 0x6F, 0x40, 0x04, 0x00, 0x11, 0xA0, 0xAA, 0x00,
+      0x02, 0x01, 0x1A],
+     // USIM response.
+     [0x62, 0x1E, 0x82, 0x05, 0x42, 0x21, 0x00, 0x1A, 0x01, 0x83, 0x02, 0x6F,
+      0x40, 0xA5, 0x03, 0x92, 0x01, 0x00, 0x8A, 0x01, 0x07, 0x8B, 0x03, 0x6F,
+diff --git a/dom/system/gonk/tests/test_ril_worker_mmi.js b/dom/system/gonk/tests/test_ril_worker_mmi.js
+--- a/dom/system/gonk/tests/test_ril_worker_mmi.js
++++ b/dom/system/gonk/tests/test_ril_worker_mmi.js
+@@ -11,17 +11,18 @@ function parseMMI(mmi) {
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+-  return worker.RIL._parseMMI(mmi);
++  let context = worker.ContextPool._contexts[0];
++  return context.RIL._parseMMI(mmi);
+ }
+ 
+ function getWorker() {
+   let _postedMessage;
+   let _worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+     },
+     postMessage: function fakePostMessage(message) {
+@@ -37,21 +38,22 @@ function getWorker() {
+       return _worker;
+     }
+   };
+ }
+ 
+ function testSendMMI(mmi, error) {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+   do_print("worker.postMessage " + worker.postMessage);
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({rilMessageType: "sendMMI", mmi: mmi});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({rilMessageType: "sendMMI", mmi: mmi});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(postedMessage.rilMessageType, "sendMMI");
+   do_check_eq(postedMessage.errorMsg, error);
+ }
+ 
+ add_test(function test_parseMMI_empty() {
+@@ -366,57 +368,59 @@ add_test(function test_sendMMI_invalid()
+   testSendMMI("11", MMI_ERROR_KS_ERROR);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_short_code() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+   let ussdOptions;
+ 
+-  worker.RIL.sendUSSD = function fakeSendUSSD(options){
++  context.RIL.sendUSSD = function fakeSendUSSD(options){
+     ussdOptions = options;
+-    worker.RIL[REQUEST_SEND_USSD](0, {
++    context.RIL[REQUEST_SEND_USSD](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+ 
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "**"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "**"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+   do_check_eq(ussdOptions.ussd, "**");
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+-  do_check_true(worker.RIL._ussdSession);
++  do_check_true(context.RIL._ussdSession);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_dial_string() {
+   testSendMMI("123", MMI_ERROR_KS_ERROR);
+ 
+   run_next_test();
+ });
+ 
+ function setCallForwardSuccess(mmi) {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCallForward = function fakeSetCallForward(options) {
+-    worker.RIL[REQUEST_SET_CALL_FORWARD](0, {
++  context.RIL.setCallForward = function fakeSetCallForward(options) {
++    context.RIL[REQUEST_SET_CALL_FORWARD](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: mmi});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: mmi});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+ }
+ 
+ add_test(function test_sendMMI_call_forwarding_activation() {
+@@ -429,41 +433,42 @@ add_test(function test_sendMMI_call_forw
+   setCallForwardSuccess("#21*12345*99*10#");
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_call_forwarding_interrogation() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.Buf.readString = function fakeReadString() {
++  context.Buf.readString = function fakeReadString() {
+     return "+34666222333";
+   };
+ 
+-  worker.RIL.queryCallForwardStatus = function fakeQueryCallForward(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.queryCallForwardStatus = function fakeQueryCallForward(options) {
++    context.Buf.int32Array = [
+       0,   // rules.timeSeconds
+       145, // rules.toa
+       49,  // rules.serviceClass
+       Ci.nsIDOMMozMobileCFInfo.CALL_FORWARD_REASON_UNCONDITIONAL, // rules.reason
+       1,   // rules.active
+       1    // rulesLength
+     ];
+-    worker.RIL[REQUEST_QUERY_CALL_FORWARD_STATUS](1, {
++    context.RIL[REQUEST_QUERY_CALL_FORWARD_STATUS](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "*#21#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "*#21#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+   do_check_true(Array.isArray(postedMessage.rules));
+   do_check_eq(postedMessage.rules.length, 1);
+   do_check_true(postedMessage.rules[0].active);
+@@ -471,29 +476,30 @@ add_test(function test_sendMMI_call_forw
+               Ci.nsIDOMMozMobileCFInfo.CALL_FORWARD_REASON_UNCONDITIONAL);
+   do_check_eq(postedMessage.rules[0].number, "+34666222333");
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_call_forwarding_interrogation_no_rules() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
++  context.Buf.readInt32 = function fakeReadUint32() {
+     return 0;
+   };
+ 
+-  worker.RIL.queryCallForwardStatus = function fakeQueryCallForward(options) {
+-    worker.RIL[REQUEST_QUERY_CALL_FORWARD_STATUS](1, {
++  context.RIL.queryCallForwardStatus = function fakeQueryCallForward(options) {
++    context.RIL[REQUEST_QUERY_CALL_FORWARD_STATUS](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "*#21#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "*#21#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, GECKO_ERROR_GENERIC_FAILURE);
+   do_check_false(postedMessage.success);
+ 
+   run_next_test();
+ });
+@@ -539,25 +545,26 @@ add_test(function test_sendMMI_call_forw
+   setCallForwardSuccess("*002*12345*99*10#");
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_change_PIN() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.changeICCPIN = function fakeChangeICCPIN(options) {
+-    worker.RIL[REQUEST_ENTER_SIM_PIN](0, {
++  context.RIL.changeICCPIN = function fakeChangeICCPIN(options) {
++    context.RIL[REQUEST_ENTER_SIM_PIN](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "**04*1234*4567*4567#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "**04*1234*4567*4567#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+@@ -584,25 +591,26 @@ add_test(function test_sendMMI_change_PI
+   testSendMMI("**04*4567*1234*4567#", MMI_ERROR_KS_MISMATCH_PIN);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_change_PIN2() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.changeICCPIN2 = function fakeChangeICCPIN2(options){
+-    worker.RIL[REQUEST_ENTER_SIM_PIN2](0, {
++  context.RIL.changeICCPIN2 = function fakeChangeICCPIN2(options){
++    context.RIL[REQUEST_ENTER_SIM_PIN2](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "**042*1234*4567*4567#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "**042*1234*4567*4567#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+@@ -629,25 +637,26 @@ add_test(function test_sendMMI_change_PI
+   testSendMMI("**042*4567*1234*4567#", MMI_ERROR_KS_MISMATCH_PIN);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_unblock_PIN() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.enterICCPUK = function fakeEnterICCPUK(options){
+-    worker.RIL[REQUEST_ENTER_SIM_PUK](0, {
++  context.RIL.enterICCPUK = function fakeEnterICCPUK(options){
++    context.RIL[REQUEST_ENTER_SIM_PUK](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "**05*1234*4567*4567#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "**05*1234*4567*4567#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+@@ -674,25 +683,26 @@ add_test(function test_sendMMI_unblock_P
+   testSendMMI("**05*4567*1234*4567#", MMI_ERROR_KS_MISMATCH_PIN);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_unblock_PIN2() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.enterICCPUK2 = function fakeEnterICCPUK2(options){
+-    worker.RIL[REQUEST_ENTER_SIM_PUK2](0, {
++  context.RIL.enterICCPUK2 = function fakeEnterICCPUK2(options){
++    context.RIL[REQUEST_ENTER_SIM_PUK2](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "**052*1234*4567*4567#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "**052*1234*4567*4567#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+@@ -719,133 +729,138 @@ add_test(function test_sendMMI_unblock_P
+   testSendMMI("**052*4567*1234*4567#", MMI_ERROR_KS_MISMATCH_PIN);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_get_IMEI() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+   let mmiOptions;
+ 
+-  worker.RIL.getIMEI = function getIMEI(options){
++  context.RIL.getIMEI = function getIMEI(options){
+     mmiOptions = options;
+-    worker.RIL[REQUEST_SEND_USSD](0, {
++    context.RIL[REQUEST_SEND_USSD](0, {
+       rilRequestError: ERROR_SUCCESS,
+     });
+   };
+ 
+-  worker.RIL.sendMMI({mmi: "*#06#"});
++  context.RIL.sendMMI({mmi: "*#06#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_neq(mmiOptions.mmi, null);
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_get_IMEI_error() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+   let mmiOptions;
+ 
+-  worker.RIL.getIMEI = function getIMEI(options){
++  context.RIL.getIMEI = function getIMEI(options){
+     mmiOptions = options;
+-    worker.RIL[REQUEST_SEND_USSD](0, {
++    context.RIL[REQUEST_SEND_USSD](0, {
+       rilRequestError: ERROR_RADIO_NOT_AVAILABLE,
+     });
+   };
+ 
+-  worker.RIL.sendMMI({mmi: "*#06#"});
++  context.RIL.sendMMI({mmi: "*#06#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_neq(mmiOptions.mmi, null);
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_RADIO_NOT_AVAILABLE);
+   do_check_false(postedMessage.success);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_call_barring_BAIC_interrogation_voice() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32List = function fakeReadUint32List() {
++  context.Buf.readInt32List = function fakeReadUint32List() {
+     return [1];
+   };
+ 
+-  worker.RIL.queryICCFacilityLock =
++  context.RIL.queryICCFacilityLock =
+     function fakeQueryICCFacilityLock(options){
+-      worker.RIL[REQUEST_QUERY_FACILITY_LOCK](1, {
++      context.RIL[REQUEST_QUERY_FACILITY_LOCK](1, {
+         rilMessageType: "sendMMI",
+         rilRequestError: ERROR_SUCCESS
+       });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "*#33#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "*#33#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_true(postedMessage.success);
+   do_check_true(postedMessage.enabled);
+   do_check_eq(postedMessage.statusMessage,  MMI_SM_KS_SERVICE_ENABLED_FOR);
+   do_check_true(Array.isArray(postedMessage.additionalInformation));
+   do_check_eq(postedMessage.additionalInformation[0], "serviceClassVoice");
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_call_barring_BAIC_activation() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+   let mmiOptions;
+ 
+-  worker.RIL.setICCFacilityLock =
++  context.RIL.setICCFacilityLock =
+     function fakeSetICCFacilityLock(options){
+       mmiOptions = options;
+-      worker.RIL[REQUEST_SET_FACILITY_LOCK](0, {
++      context.RIL[REQUEST_SET_FACILITY_LOCK](0, {
+         rilMessageType: "sendMMI",
+         procedure: MMI_PROCEDURE_ACTIVATION,
+         rilRequestError: ERROR_SUCCESS
+       });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "*33#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "*33#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(mmiOptions.procedure, MMI_PROCEDURE_ACTIVATION);
+   do_check_true(postedMessage.success);
+   do_check_eq(postedMessage.statusMessage,  MMI_SM_KS_SERVICE_ENABLED);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_call_barring_BAIC_deactivation() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+   let mmiOptions;
+ 
+-  worker.RIL.setICCFacilityLock =
++  context.RIL.setICCFacilityLock =
+     function fakeSetICCFacilityLock(options){
+       mmiOptions = options;
+-      worker.RIL[REQUEST_SET_FACILITY_LOCK](0, {
++      context.RIL[REQUEST_SET_FACILITY_LOCK](0, {
+         rilMessageType: "sendMMI",
+         procedure: MMI_PROCEDURE_DEACTIVATION,
+         rilRequestError: ERROR_SUCCESS
+       });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "#33#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "#33#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(mmiOptions.procedure, MMI_PROCEDURE_DEACTIVATION);
+   do_check_true(postedMessage.success);
+   do_check_eq(postedMessage.statusMessage,  MMI_SM_KS_SERVICE_DISABLED);
+ 
+   run_next_test();
+@@ -855,75 +870,78 @@ add_test(function test_sendMMI_call_barr
+   testSendMMI("**33*0000#", MMI_ERROR_KS_NOT_SUPPORTED);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_USSD() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+   let ussdOptions;
+ 
+-  worker.RIL.sendUSSD = function fakeSendUSSD(options){
++  context.RIL.sendUSSD = function fakeSendUSSD(options){
+     ussdOptions = options;
+-    worker.RIL[REQUEST_SEND_USSD](0, {
++    context.RIL[REQUEST_SEND_USSD](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "*123#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "*123#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(ussdOptions.ussd, "*123#");
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+-  do_check_true(worker.RIL._ussdSession);
++  do_check_true(context.RIL._ussdSession);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_USSD_error() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+   let ussdOptions;
+ 
+-  worker.RIL.sendUSSD = function fakeSendUSSD(options){
++  context.RIL.sendUSSD = function fakeSendUSSD(options){
+     ussdOptions = options;
+-    worker.RIL[REQUEST_SEND_USSD](0, {
++    context.RIL[REQUEST_SEND_USSD](0, {
+       rilRequestError: ERROR_GENERIC_FAILURE
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "*123#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "*123#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(ussdOptions.ussd, "*123#");
+   do_check_eq (postedMessage.errorMsg, GECKO_ERROR_GENERIC_FAILURE);
+   do_check_false(postedMessage.success);
+-  do_check_false(worker.RIL._ussdSession);
++  do_check_false(context.RIL._ussdSession);
+ 
+   run_next_test();
+ });
+ 
+ function setCallWaitingSuccess(mmi) {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setCallWaiting = function fakeSetCallWaiting(options) {
+-    worker.RIL[REQUEST_SET_CALL_WAITING](0, {
++  context.RIL.setCallWaiting = function fakeSetCallWaiting(options) {
++    context.RIL[REQUEST_SET_CALL_WAITING](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: mmi});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: mmi});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+ }
+ 
+ add_test(function test_sendMMI_call_waiting_activation() {
+@@ -948,34 +966,35 @@ add_test(function test_sendMMI_call_wait
+   testSendMMI("##43#", MMI_ERROR_KS_NOT_SUPPORTED);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_sendMMI_call_waiting_interrogation() {
+   let workerhelper = getWorker();
+   let worker = workerhelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32 = function fakeReadUint32() {
+-    return worker.Buf.int32Array.pop();
++  context.Buf.readInt32 = function fakeReadUint32() {
++    return context.Buf.int32Array.pop();
+   };
+ 
+-  worker.RIL.queryCallWaiting = function fakeQueryCallWaiting(options) {
+-    worker.Buf.int32Array = [
++  context.RIL.queryCallWaiting = function fakeQueryCallWaiting(options) {
++    context.Buf.int32Array = [
+       7,   // serviceClass
+       1,   // enabled
+       2    // length
+     ];
+-    worker.RIL[REQUEST_QUERY_CALL_WAITING](1, {
++    context.RIL[REQUEST_QUERY_CALL_WAITING](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.radioState = GECKO_RADIOSTATE_READY;
+-  worker.RIL.sendMMI({mmi: "*#43#"});
++  context.RIL.radioState = GECKO_RADIOSTATE_READY;
++  context.RIL.sendMMI({mmi: "*#43#"});
+ 
+   let postedMessage = workerhelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, GECKO_ERROR_SUCCESS);
+   do_check_true(postedMessage.success);
+   do_check_eq(postedMessage.length, 2);
+   do_check_true(postedMessage.enabled);
+   run_next_test();
+diff --git a/dom/system/gonk/tests/test_ril_worker_ruim.js b/dom/system/gonk/tests/test_ril_worker_ruim.js
+--- a/dom/system/gonk/tests/test_ril_worker_ruim.js
++++ b/dom/system/gonk/tests/test_ril_worker_ruim.js
+@@ -7,77 +7,81 @@ function run_test() {
+   run_next_test();
+ }
+ 
+ /**
+  * Helper function.
+  */
+ function newUint8Worker() {
+   let worker = newWorker();
++  let context = worker.ContextPool._contexts[0];
+   let index = 0; // index for read
+   let buf = [];
+ 
+-  worker.Buf.writeUint8 = function (value) {
++  context.Buf.writeUint8 = function (value) {
+     buf.push(value);
+   };
+ 
+-  worker.Buf.readUint8 = function () {
++  context.Buf.readUint8 = function () {
+     return buf[index++];
+   };
+ 
+-  worker.Buf.seekIncoming = function (offset) {
++  context.Buf.seekIncoming = function (offset) {
+     index += offset;
+   };
+ 
+   worker.debug = do_print;
+ 
+   return worker;
+ }
+ 
+ /**
+  * Verify RUIM Service.
+  */
+ add_test(function test_is_ruim_service_available() {
+   let worker = newWorker();
+-  worker.RIL._isCdma = true;
+-  worker.RIL.appType = CARD_APPTYPE_RUIM;
++  let context = worker.ContextPool._contexts[0];
++  context.RIL._isCdma = true;
++  context.RIL.appType = CARD_APPTYPE_RUIM;
+ 
+   function test_table(cst, geckoService, enabled) {
+-    worker.RIL.iccInfoPrivate.cst = cst;
+-    do_check_eq(worker.ICCUtilsHelper.isICCServiceAvailable(geckoService),
++    context.RIL.iccInfoPrivate.cst = cst;
++    do_check_eq(context.ICCUtilsHelper.isICCServiceAvailable(geckoService),
+                 enabled);
+   }
+ 
+   test_table([0x0, 0x0, 0x0, 0x0, 0x03], "SPN", true);
+   test_table([0x0, 0x0, 0x0, 0x03, 0x0], "SPN", false);
+   test_table([0x0, 0x0C, 0x0, 0x0, 0x0], "ENHANCED_PHONEBOOK", true);
+   test_table([0x0, 0x0,  0x0, 0x0, 0x0], "ENHANCED_PHONEBOOK", false);
+ 
+   run_next_test();
+ });
+ 
+ /**
+  * Verify EF_PATH for RUIM file.
+  */
+ add_test(function test_ruim_file_path_id() {
+   let worker = newWorker();
+-  let RIL = worker.RIL;
+-  let ICCFileHelper = worker.ICCFileHelper;
++  let context = worker.ContextPool._contexts[0];
++  let RIL = context.RIL;
++  let ICCFileHelper = context.ICCFileHelper;
+ 
+   RIL.appType = CARD_APPTYPE_RUIM;
+   do_check_eq(ICCFileHelper.getEFPath(ICC_EF_CSIM_CST),
+               EF_PATH_MF_SIM + EF_PATH_DF_CDMA);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_fetch_ruim_recodes() {
+   let worker = newWorker();
+-  let RIL = worker.RIL;
+-  let ruimHelper = worker.RuimRecordHelper;
++  let context = worker.ContextPool._contexts[0];
++  let RIL = context.RIL;
++  let ruimHelper = context.RuimRecordHelper;
+ 
+   function testFetchRuimRecordes(expectCalled) {
+     let ifCalled = [];
+ 
+     ruimHelper.getIMSI_M = function () {
+       ifCalled.push("getIMSI_M");
+     };
+ 
+@@ -110,19 +114,20 @@ add_test(function test_fetch_ruim_recode
+   run_next_test();
+ });
+ 
+ /**
+  * Verify RuimRecordHelper.decodeIMSIValue
+  */
+ add_test(function test_decode_imsi_value() {
+   let worker = newUint8Worker();
++  let context = worker.ContextPool._contexts[0];
+ 
+   function testDecodeImsiValue(encoded, length, expect) {
+-    let decoded = worker.RuimRecordHelper.decodeIMSIValue(encoded, length);
++    let decoded = context.RuimRecordHelper.decodeIMSIValue(encoded, length);
+ 
+     do_check_eq(expect, decoded);
+   }
+ 
+   testDecodeImsiValue( 99, 2, "00");
+   testDecodeImsiValue( 90, 2, "01");
+   testDecodeImsiValue( 19, 2, "20");
+   testDecodeImsiValue( 23, 2, "34");
+@@ -140,19 +145,20 @@ add_test(function test_decode_imsi_value
+   run_next_test();
+ });
+ 
+ /**
+  * Verify RuimRecordHelper.getIMSI_M
+  */
+ add_test(function test_get_imsi_m() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+ 
+   function testDecodeImsi(encodedImsi, expectedImsi) {
+     io.loadTransparentEF = function fakeLoadTransparentEF(options) {
+       // Write data size
+       buf.writeInt32(encodedImsi.length * 2);
+ 
+       // Write imsi
+       for (let i = 0; i < encodedImsi.length; i++) {
+@@ -162,18 +168,18 @@ add_test(function test_get_imsi_m() {
+       // Write string delimiter
+       buf.writeStringDelimiter(encodedImsi.length * 2);
+ 
+       if (options.callback) {
+         options.callback(options);
+       }
+     };
+ 
+-    worker.RuimRecordHelper.getIMSI_M();
+-    let imsi = worker.RIL.iccInfoPrivate.imsi;
++    context.RuimRecordHelper.getIMSI_M();
++    let imsi = context.RIL.iccInfoPrivate.imsi;
+ 
+     do_check_eq(expectedImsi, imsi)
+   }
+ 
+   let imsi_1 = "466050081062861";
+   testDecodeImsi([0x0, 0xe5, 0x03, 0xee, 0xca, 0x17, 0x5e, 0x80, 0x63, 0x01], imsi_1);
+ 
+   let imsi_2 = "460038351175976";
+@@ -182,19 +188,20 @@ add_test(function test_get_imsi_m() {
+   run_next_test();
+ });
+ 
+ /**
+  * Verify RuimRecordHelper.readCDMAHome
+  */
+ add_test(function test_read_cdmahome() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+ 
+   io.loadLinearFixedEF = function fakeLoadLinearFixedEF(options)  {
+     let cdmaHome = [0xc1, 0x34, 0xff, 0xff, 0x00];
+ 
+     // Write data size
+     buf.writeInt32(cdmaHome.length * 2);
+ 
+     // Write cdma home file.
+@@ -209,18 +216,18 @@ add_test(function test_read_cdmahome() {
+ 
+     options.totalRecords = 1;
+     if (options.callback) {
+       options.callback(options);
+     }
+   };
+ 
+   function testCdmaHome(expectedSystemIds, expectedNetworkIds) {
+-    worker.RuimRecordHelper.readCDMAHome();
+-    let cdmaHome = worker.RIL.cdmaHome;
++    context.RuimRecordHelper.readCDMAHome();
++    let cdmaHome = context.RIL.cdmaHome;
+     for (let i = 0; i < expectedSystemIds.length; i++) {
+       do_check_eq(cdmaHome.systemId[i], expectedSystemIds[i]);
+       do_check_eq(cdmaHome.networkId[i], expectedNetworkIds[i]);
+     }
+     do_check_eq(cdmaHome.systemId.length, expectedSystemIds.length);
+     do_check_eq(cdmaHome.networkId.length, expectedNetworkIds.length);
+   }
+ 
+@@ -229,19 +236,20 @@ add_test(function test_read_cdmahome() {
+   run_next_test();
+ });
+ 
+ /**
+  * Verify reading CDMA EF_SPN
+  */
+ add_test(function test_read_cdmaspn() {
+   let worker = newUint8Worker();
+-  let helper = worker.GsmPDUHelper;
+-  let buf    = worker.Buf;
+-  let io     = worker.ICCIOHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let buf    = context.Buf;
++  let io     = context.ICCIOHelper;
+ 
+   function testReadSpn(file, expectedSpn, expectedDisplayCondition) {
+     io.loadTransparentEF = function fakeLoadTransparentEF(options)  {
+       // Write data size
+       buf.writeInt32(file.length * 2);
+ 
+       // Write file.
+       for (let i = 0; i < file.length; i++) {
+@@ -251,19 +259,19 @@ add_test(function test_read_cdmaspn() {
+       // Write string delimiter
+       buf.writeStringDelimiter(file.length * 2);
+ 
+       if (options.callback) {
+         options.callback(options);
+       }
+     };
+ 
+-    worker.RuimRecordHelper.readSPN();
+-    do_check_eq(worker.RIL.iccInfo.spn, expectedSpn);
+-    do_check_eq(worker.RIL.iccInfoPrivate.spnDisplayCondition,
++    context.RuimRecordHelper.readSPN();
++    do_check_eq(context.RIL.iccInfo.spn, expectedSpn);
++    do_check_eq(context.RIL.iccInfoPrivate.spnDisplayCondition,
+                 expectedDisplayCondition);
+   }
+ 
+   testReadSpn([0x01, 0x04, 0x06, 0x4e, 0x9e, 0x59, 0x2a, 0x96,
+                0xfb, 0x4f, 0xe1, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0xff],
+@@ -292,18 +300,19 @@ add_test(function test_cdma_spn_display_
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+-  let RIL = worker.RIL;
+-  let ICCUtilsHelper = worker.ICCUtilsHelper;
++  let context = worker.ContextPool._contexts[0];
++  let RIL = context.RIL;
++  let ICCUtilsHelper = context.ICCUtilsHelper;
+ 
+   // Set cdma.
+   RIL._isCdma = true;
+ 
+   // Test updateDisplayCondition runs before any of SIM file is ready.
+   do_check_eq(ICCUtilsHelper.updateDisplayCondition(), true);
+   do_check_eq(RIL.iccInfo.isDisplayNetworkNameRequired, true);
+   do_check_eq(RIL.iccInfo.isDisplaySpnRequired, false);
+diff --git a/dom/system/gonk/tests/test_ril_worker_sms.js b/dom/system/gonk/tests/test_ril_worker_sms.js
+--- a/dom/system/gonk/tests/test_ril_worker_sms.js
++++ b/dom/system/gonk/tests/test_ril_worker_sms.js
+@@ -113,18 +113,19 @@ function newWriteHexOctetAsUint8Worker()
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
+-  worker.GsmPDUHelper.writeHexOctet = function (value) {
+-    worker.Buf.writeUint8(value);
++  let context = worker.ContextPool._contexts[0];
++  context.GsmPDUHelper.writeHexOctet = function (value) {
++    context.Buf.writeUint8(value);
+   };
+ 
+   return worker;
+ }
+ 
+ function add_test_receiving_sms(expected, pdu) {
+   add_test(function test_receiving_sms() {
+     let worker = newWorker({
+@@ -134,33 +135,34 @@ function add_test_receiving_sms(expected
+       postMessage: function fakePostMessage(message) {
+         do_print("fullBody: " + message.fullBody);
+         do_check_eq(expected, message.fullBody)
+       }
+     });
+ 
+     do_print("expect: " + expected);
+     do_print("pdu: " + pdu);
+-    worker.onRILMessage(newSmsParcel(pdu));
++    worker.onRILMessage(0, newSmsParcel(pdu));
+ 
+     run_next_test();
+   });
+ }
+ 
+ let test_receiving_7bit_alphabets__ril;
+ let test_receiving_7bit_alphabets__worker;
+ function test_receiving_7bit_alphabets(lst, sst) {
+   if (!test_receiving_7bit_alphabets__ril) {
+     test_receiving_7bit_alphabets__ril = newRadioInterface();
+     test_receiving_7bit_alphabets__worker = newWriteHexOctetAsUint8Worker();
+   }
+   let ril = test_receiving_7bit_alphabets__ril;
+   let worker = test_receiving_7bit_alphabets__worker;
+-  let helper = worker.GsmPDUHelper;
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
++  let buf = context.Buf;
+ 
+   function get7bitRawBytes(expected) {
+     buf.outgoingIndex = 0;
+     helper.writeStringAsSeptets(expected, 0, lst, sst);
+ 
+     let subArray = buf.outgoingBytes.subarray(0, buf.outgoingIndex);
+     return Array.slice(subArray);
+   }
+@@ -178,21 +180,22 @@ function test_receiving_7bit_alphabets(l
+     add_test_receiving_sms(expected, pdu);
+ 
+     i += len;
+   }
+ }
+ 
+ function test_receiving_ucs2_alphabets(text) {
+   let worker = test_receiving_7bit_alphabets__worker;
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
+ 
+   function getUCS2RawBytes(expected) {
+     buf.outgoingIndex = 0;
+-    worker.GsmPDUHelper.writeUCS2String(expected);
++    context.GsmPDUHelper.writeUCS2String(expected);
+ 
+     let subArray = buf.outgoingBytes.subarray(0, buf.outgoingIndex);
+     return Array.slice(subArray);
+   }
+ 
+   for (let i = 0; i < text.length;) {
+     let len = Math.min(70, text.length - i);
+     let expected = text.substring(i, i + len);
+@@ -215,18 +218,19 @@ for (let lst = 0; lst < PDU_NL_LOCKING_S
+     }
+   }
+ }
+ test_receiving_ucs2_alphabets(ucs2str);
+ 
+ // Bug 820220: B2G SMS: wrong order and truncated content in multi-part messages
+ add_test(function test_sendSMS_UCS2_without_langIndex_langShiftIndex_defined() {
+   let worker = newWriteHexOctetAsUint8Worker();
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.sendParcel = function () {
++  context.Buf.sendParcel = function () {
+     // Each sendParcel() call represents one outgoing segment of a multipart
+     // SMS message. Here, we have the first segment send, so it's "Hello "
+     // only.
+     //
+     // 4(parcel size) + 4(request type) + 4(token)
+     // + 4(two messages) + 4(null SMSC) + 4(message string length)
+     // + 1(first octet) + 1(message reference)
+     // + 2(DA len, TOA) + 4(addr)
+@@ -237,17 +241,17 @@ add_test(function test_sendSMS_UCS2_with
+     //
+     // If we have additional 6(type, len, langIndex, type len, langShiftIndex)
+     // octets here, then bug 809553 is not fixed.
+     do_check_eq(this.outgoingIndex, 57);
+ 
+     run_next_test();
+   };
+ 
+-  worker.RIL.sendSMS({
++  context.RIL.sendSMS({
+     number: "1",
+     segmentMaxSeq: 2,
+     fullBody: "Hello World!",
+     dcs: PDU_DCS_MSG_CODING_16BITS_ALPHABET,
+     segmentRef16Bit: false,
+     userDataHeaderLength: 5,
+     requestStatusReport: true,
+     segments: [
+diff --git a/dom/system/gonk/tests/test_ril_worker_sms_cdma.js b/dom/system/gonk/tests/test_ril_worker_sms_cdma.js
+--- a/dom/system/gonk/tests/test_ril_worker_sms_cdma.js
++++ b/dom/system/gonk/tests/test_ril_worker_sms_cdma.js
+@@ -27,20 +27,21 @@ function _getWorker() {
+ }
+ 
+ /**
+  * Verify CDMA SMS Delivery ACK Message.
+  */
+ add_test(function test_processCdmaSmsStatusReport() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+   function test_StatusReport(errorClass, msgStatus) {
+     let msgId = 0;
+-    let sentSmsMap = worker.RIL._pendingSentSmsMap;
++    let sentSmsMap = context.RIL._pendingSentSmsMap;
+ 
+     sentSmsMap[msgId] = {};
+ 
+     let message = {
+       SMSC:             "",
+       mti:              0,
+       udhi:             0,
+       sender:           "0987654321",
+@@ -63,17 +64,17 @@ add_test(function test_processCdmaSmsSta
+       messageType:      PDU_CDMA_MSG_TYPE_P2P,
+       serviceCategory:  0,
+       subMsgType:       PDU_CDMA_MSG_TYPE_DELIVER_ACK,
+       msgId:            msgId,
+       errorClass:       errorClass,
+       msgStatus:        msgStatus
+     };
+ 
+-    worker.RIL._processCdmaSmsStatusReport(message);
++    context.RIL._processCdmaSmsStatusReport(message);
+ 
+     let postedMessage = workerHelper.postedMessage;
+ 
+     // Check if pending token is removed.
+     do_check_true((errorClass === 2)? !!sentSmsMap[msgId]: !sentSmsMap[msgId]);
+ 
+     // Check the response message accordingly.
+     if (errorClass === -1) {
+diff --git a/dom/system/gonk/tests/test_ril_worker_sms_cdmapduhelper.js b/dom/system/gonk/tests/test_ril_worker_sms_cdmapduhelper.js
+--- a/dom/system/gonk/tests/test_ril_worker_sms_cdmapduhelper.js
++++ b/dom/system/gonk/tests/test_ril_worker_sms_cdmapduhelper.js
+@@ -14,21 +14,22 @@ add_test(function test_CdmaPDUHelper_enc
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
++  let context = worker.ContextPool._contexts[0];
+ 
+   let testDataBuffer = [];
+-  worker.BitBufferHelper.startWrite(testDataBuffer);
++  context.BitBufferHelper.startWrite(testDataBuffer);
+ 
+-  let helper = worker.CdmaPDUHelper;
++  let helper = context.CdmaPDUHelper;
+   helper.encodeUserDataReplyOption({requestStatusReport: true});
+ 
+   let expectedDataBuffer = [PDU_CDMA_MSG_USERDATA_REPLY_OPTION, 0x01, 0x40];
+ 
+   do_check_eq(testDataBuffer.length, expectedDataBuffer.length);
+ 
+   for (let i = 0; i < expectedDataBuffer.length; i++) {
+     do_check_eq(testDataBuffer[i], expectedDataBuffer[i]);
+@@ -44,21 +45,22 @@ add_test(function test_CdmaPDUHelper_dec
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
++  let context = worker.ContextPool._contexts[0];
+ 
+-  let helper = worker.CdmaPDUHelper;
++  let helper = context.CdmaPDUHelper;
+   function test_MsgStatus(octet) {
+     let testDataBuffer = [octet];
+-    worker.BitBufferHelper.startRead(testDataBuffer);
++    context.BitBufferHelper.startRead(testDataBuffer);
+     let result = helper.decodeUserDataMsgStatus();
+ 
+     do_check_eq(result.errorClass, octet >>> 6);
+     do_check_eq(result.msgStatus, octet & 0x3F);
+   }
+ 
+   // 00|000000: no error|Message accepted
+   test_MsgStatus(0x00);
+diff --git a/dom/system/gonk/tests/test_ril_worker_sms_gsmpduhelper.js b/dom/system/gonk/tests/test_ril_worker_sms_gsmpduhelper.js
+--- a/dom/system/gonk/tests/test_ril_worker_sms_gsmpduhelper.js
++++ b/dom/system/gonk/tests/test_ril_worker_sms_gsmpduhelper.js
+@@ -15,17 +15,18 @@ add_test(function test_GsmPDUHelper_read
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
+-  let helper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
+   function test_dcs(dcs, encoding, messageClass, mwi) {
+     helper.readHexOctet = function () {
+       return dcs;
+     }
+ 
+     let msg = {};
+     helper.readDataCodingScheme(msg);
+ 
+@@ -154,17 +155,18 @@ add_test(function test_GsmPDUHelper_writ
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
+-  let helper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
+   helper.resetOctetWritten = function () {
+     helper.octetsWritten = 0;
+   };
+   helper.writeHexOctet = function () {
+     helper.octetsWritten++;
+   };
+ 
+   let base = "AAAAAAAA"; // Base string of 8 characters long
+@@ -191,28 +193,28 @@ add_test(function test_GsmPDUHelper_writ
+ add_test(function test_GsmPDUHelper_readAddress() {
+   let worker = newWorker({
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+-
+   });
+ 
+-  let helper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
+   function test_address(addrHex, addrString) {
+     let uint16Array = [];
+     let ix = 0;
+     for (let i = 0; i < addrHex.length; ++i) {
+       uint16Array[i] = addrHex[i].charCodeAt();
+     }
+ 
+-    worker.Buf.readUint16 = function (){
++    context.Buf.readUint16 = function (){
+       if(ix >= uint16Array.length) {
+         do_throw("out of range in uint16Array");
+       }
+       return uint16Array[ix++];
+     }
+     let length = helper.readHexOctet();
+     let parsedAddr = helper.readAddress(length);
+     do_check_eq(parsedAddr, addrString);
+diff --git a/dom/system/gonk/tests/test_ril_worker_sms_segment_info.js b/dom/system/gonk/tests/test_ril_worker_sms_segment_info.js
+--- a/dom/system/gonk/tests/test_ril_worker_sms_segment_info.js
++++ b/dom/system/gonk/tests/test_ril_worker_sms_segment_info.js
+@@ -22,17 +22,18 @@ add_test(function test_RadioInterface__c
+     postRILMessage: function fakePostRILMessage(data) {
+       // Do nothing
+     },
+     postMessage: function fakePostMessage(message) {
+       // Do nothing
+     }
+   });
+ 
+-  let helper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let helper = context.GsmPDUHelper;
+   helper.resetOctetWritten = function () {
+     helper.octetsWritten = 0;
+   };
+   helper.writeHexOctet = function () {
+     helper.octetsWritten++;
+   };
+ 
+   function do_check_calc(str, expectedCalcLen, lst, sst, strict7BitEncoding, strToWrite) {
+diff --git a/dom/system/gonk/tests/test_ril_worker_ssn.js b/dom/system/gonk/tests/test_ril_worker_ssn.js
+--- a/dom/system/gonk/tests/test_ril_worker_ssn.js
++++ b/dom/system/gonk/tests/test_ril_worker_ssn.js
+@@ -24,16 +24,17 @@ function _getWorker() {
+       return _worker;
+     }
+   };
+ }
+ 
+ add_test(function test_notification() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+   function Call(callIndex, number) {
+     this.callIndex = callIndex;
+     this.number = number;
+   }
+ 
+   Call.prototype = {
+     state: CALL_STATE_DIALING,
+@@ -64,35 +65,35 @@ add_test(function test_notification() {
+                             resultCallIndex) {
+ 
+     let testInfo = {calls: calls, code: code, number: number,
+                     resultNotification: resultNotification,
+                     resultCallIndex: resultCallIndex};
+     do_print('Test case info: ' + JSON.stringify(testInfo));
+ 
+     // Set current calls.
+-    worker.RIL._processCalls(calls);
++    context.RIL._processCalls(calls);
+ 
+     let notificationInfo = {
+       notificationType: 1,  // MT
+       code: code,
+       index: 0,
+       type: 0,
+       number: number
+     };
+ 
+-    worker.RIL._processSuppSvcNotification(notificationInfo);
++    context.RIL._processSuppSvcNotification(notificationInfo);
+ 
+     let postedMessage = workerHelper.postedMessage;
+     do_check_eq(postedMessage.rilMessageType, 'suppSvcNotification');
+     do_check_eq(postedMessage.notification, resultNotification);
+     do_check_eq(postedMessage.callIndex, resultCallIndex);
+ 
+     // Clear all existed calls.
+-    worker.RIL._processCalls(null);
++    context.RIL._processCalls(null);
+   }
+ 
+   testNotification(oneCall, SUPP_SVC_NOTIFICATION_CODE2_PUT_ON_HOLD, null,
+                    GECKO_SUPP_SVC_NOTIFICATION_REMOTE_HELD, 0);
+ 
+   testNotification(oneCall, SUPP_SVC_NOTIFICATION_CODE2_RETRIEVED, null,
+                    GECKO_SUPP_SVC_NOTIFICATION_REMOTE_RESUMED, 0);
+ 
+diff --git a/dom/system/gonk/tests/test_ril_worker_stk.js b/dom/system/gonk/tests/test_ril_worker_stk.js
+--- a/dom/system/gonk/tests/test_ril_worker_stk.js
++++ b/dom/system/gonk/tests/test_ril_worker_stk.js
+@@ -9,96 +9,100 @@ function run_test() {
+ 
+ /**
+  * Helper function.
+  */
+ function newUint8Worker() {
+   let worker = newWorker();
+   let index = 0; // index for read
+   let buf = [];
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.writeUint8 = function (value) {
++  context.Buf.writeUint8 = function (value) {
+     buf.push(value);
+   };
+ 
+-  worker.Buf.readUint8 = function () {
++  context.Buf.readUint8 = function () {
+     return buf[index++];
+   };
+ 
+-  worker.Buf.seekIncoming = function (offset) {
++  context.Buf.seekIncoming = function (offset) {
+     index += offset;
+   };
+ 
+   worker.debug = do_print;
+ 
+   return worker;
+ }
+ 
+ function newUint8SupportOutgoingIndexWorker() {
+   let worker = newWorker();
+   let index = 4;          // index for read
+   let buf = [0, 0, 0, 0]; // Preserved parcel size
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.writeUint8 = function (value) {
+-    if (worker.Buf.outgoingIndex >= buf.length) {
++  context.Buf.writeUint8 = function (value) {
++    if (context.Buf.outgoingIndex >= buf.length) {
+       buf.push(value);
+     } else {
+-      buf[worker.Buf.outgoingIndex] = value;
++      buf[context.Buf.outgoingIndex] = value;
+     }
+ 
+-    worker.Buf.outgoingIndex++;
++    context.Buf.outgoingIndex++;
+   };
+ 
+-  worker.Buf.readUint8 = function () {
++  context.Buf.readUint8 = function () {
+     return buf[index++];
+   };
+ 
+-  worker.Buf.seekIncoming = function (offset) {
++  context.Buf.seekIncoming = function (offset) {
+     index += offset;
+   };
+ 
+   worker.debug = do_print;
+ 
+   return worker;
+ }
+ 
+ // Test RIL requests related to STK.
+ /**
+  * Verify if RIL.sendStkTerminalProfile be called.
+  */
+ add_test(function test_if_send_stk_terminal_profile() {
+   let worker = newUint8Worker();
++  let context = worker.ContextPool._contexts[0];
+   let profileSend = false;
+-  worker.RIL.sendStkTerminalProfile = function (data) {
++  context.RIL.sendStkTerminalProfile = function (data) {
+     profileSend = true;
+   };
+ 
+   let iccStatus = {
+     gsmUmtsSubscriptionAppIndex: 0,
+     apps: [{
+       app_state: CARD_APPSTATE_READY,
+       app_type: CARD_APPTYPE_USIM
+     }],
+   };
+   worker.RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD = false;
+ 
+-  worker.RIL._processICCStatus(iccStatus);
++  context.RIL._processICCStatus(iccStatus);
+ 
+   do_check_eq(profileSend, false);
+ 
+   run_next_test();
+ });
+ 
+ /**
+  * Verify RIL.sendStkTerminalProfile
+  */
+ add_test(function test_send_stk_terminal_profile() {
+   let worker = newUint8Worker();
+-  let ril = worker.RIL;
+-  let buf = worker.Buf;
++  let context = worker.ContextPool._contexts[0];
++  let ril = context.RIL;
++  let buf = context.Buf;
+ 
+   ril.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+ 
+   buf.seekIncoming(8);
+   let profile = buf.readString();
+   for (let i = 0; i < STK_SUPPORTED_TERMINAL_PROFILE.length; i++) {
+     do_check_eq(parseInt(profile.substring(2 * i, 2 * i + 2), 16),
+                 STK_SUPPORTED_TERMINAL_PROFILE[i]);
+@@ -107,18 +111,19 @@ add_test(function test_send_stk_terminal
+   run_next_test();
+ });
+ 
+ /**
+  * Verify STK terminal response
+  */
+ add_test(function test_stk_terminal_response() {
+   let worker = newUint8SupportOutgoingIndexWorker();
+-  let buf = worker.Buf;
+-  let pduHelper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let pduHelper = context.GsmPDUHelper;
+ 
+   buf.sendParcel = function () {
+     // Type
+     do_check_eq(this.readInt32(), REQUEST_STK_SEND_TERMINAL_RESPONSE);
+ 
+     // Token : we don't care
+     this.readInt32();
+ 
+@@ -166,28 +171,29 @@ add_test(function test_stk_terminal_resp
+       commandQualifier: STK_LOCAL_INFO_NNA,
+       options: {
+         isPacked: true
+       }
+     },
+     input: "Mozilla",
+     resultCode: STK_RESULT_OK
+   };
+-  worker.RIL.sendStkTerminalResponse(response);
++  context.RIL.sendStkTerminalResponse(response);
+ });
+ 
+ // Test ComprehensionTlvHelper
+ 
+ /**
+  * Verify ComprehensionTlvHelper.writeLocationInfoTlv
+  */
+ add_test(function test_write_location_info_tlv() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let tlvHelper = worker.ComprehensionTlvHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let tlvHelper = context.ComprehensionTlvHelper;
+ 
+   // Test with 2-digit mnc, and gsmCellId obtained from UMTS network.
+   let loc = {
+     mcc: "466",
+     mnc: "92",
+     gsmLocationAreaCode : 10291,
+     gsmCellId: 19072823
+   };
+@@ -265,18 +271,19 @@ add_test(function test_write_location_in
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ComprehensionTlvHelper.writeErrorNumber
+  */
+ add_test(function test_write_disconnecting_cause() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let tlvHelper = worker.ComprehensionTlvHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let tlvHelper = context.ComprehensionTlvHelper;
+ 
+   tlvHelper.writeCauseTlv(RIL_ERROR_TO_GECKO_ERROR[ERROR_GENERIC_FAILURE]);
+   let tag = pduHelper.readHexOctet();
+   do_check_eq(tag, COMPREHENSIONTLV_TAG_CAUSE | COMPREHENSIONTLV_FLAG_CR);
+   let len = pduHelper.readHexOctet();
+   do_check_eq(len, 2);  // We have one cause.
+   let standard = pduHelper.readHexOctet();
+   do_check_eq(standard, 0x60);
+@@ -286,17 +293,18 @@ add_test(function test_write_disconnecti
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ComprehensionTlvHelper.getSizeOfLengthOctets
+  */
+ add_test(function test_get_size_of_length_octets() {
+   let worker = newUint8Worker();
+-  let tlvHelper = worker.ComprehensionTlvHelper;
++  let context = worker.ContextPool._contexts[0];
++  let tlvHelper = context.ComprehensionTlvHelper;
+ 
+   let length = 0x70;
+   do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 1);
+ 
+   length = 0x80;
+   do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 2);
+ 
+   length = 0x180;
+@@ -308,18 +316,19 @@ add_test(function test_get_size_of_lengt
+   run_next_test();
+ });
+ 
+ /**
+  * Verify ComprehensionTlvHelper.writeLength
+  */
+ add_test(function test_write_length() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let tlvHelper = worker.ComprehensionTlvHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let tlvHelper = context.ComprehensionTlvHelper;
+ 
+   let length = 0x70;
+   tlvHelper.writeLength(length);
+   do_check_eq(pduHelper.readHexOctet(), length);
+ 
+   length = 0x80;
+   tlvHelper.writeLength(length);
+   do_check_eq(pduHelper.readHexOctet(), 0x81);
+@@ -342,19 +351,20 @@ add_test(function test_write_length() {
+ });
+ 
+ // Test Proactive commands.
+ /**
+  * Verify Proactive command helper : searchForNextTag
+  */
+ add_test(function test_stk_proactive_command_search_next_tag() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   let tag_test = [
+     0xD0,
+     0x3C,
+     0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x31,
+     0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x32,
+     0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x33,
+     0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x34,
+@@ -384,19 +394,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Refresh
+  */
+ add_test(function test_stk_proactive_command_refresh() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   let refresh_1 = [
+     0xD0,
+     0x10,
+     0x81, 0x03, 0x01, 0x01, 0x01,
+     0x82, 0x02, 0x81, 0x82,
+     0x92, 0x05, 0x01, 0x3F, 0x00, 0x2F, 0xE2];
+ 
+@@ -417,19 +428,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Play Tone
+  */
+ add_test(function test_stk_proactive_command_play_tone() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   let tone_1 = [
+     0xD0,
+     0x1B,
+     0x81, 0x03, 0x01, 0x20, 0x00,
+     0x82, 0x02, 0x81, 0x03,
+     0x85, 0x09, 0x44, 0x69, 0x61, 0x6C, 0x20, 0x54, 0x6F, 0x6E, 0x65,
+     0x8E, 0x01, 0x01,
+@@ -459,19 +471,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Poll Interval
+  */
+ add_test(function test_stk_proactive_command_poll_interval() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   let poll_1 = [
+     0xD0,
+     0x0D,
+     0x81, 0x03, 0x01, 0x03, 0x00,
+     0x82, 0x02, 0x81, 0x82,
+     0x84, 0x02, 0x01, 0x14];
+ 
+@@ -493,19 +506,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command: Display Text
+  */
+ add_test(function test_read_septets_to_string() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   let display_text_1 = [
+     0xd0,
+     0x28,
+     0x81, 0x03, 0x01, 0x21, 0x80,
+     0x82, 0x02, 0x81, 0x02,
+     0x0d, 0x1d, 0x00, 0xd3, 0x30, 0x9b, 0xfc, 0x06, 0xc9, 0x5c, 0x30, 0x1a,
+     0xa8, 0xe8, 0x02, 0x59, 0xc3, 0xec, 0x34, 0xb9, 0xac, 0x07, 0xc9, 0x60,
+@@ -524,19 +538,20 @@ add_test(function test_read_septets_to_s
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command: Set Up Event List.
+  */
+ add_test(function test_stk_proactive_command_event_list() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   let event_1 = [
+     0xD0,
+     0x0F,
+     0x81, 0x03, 0x01, 0x05, 0x00,
+     0x82, 0x02, 0x81, 0x82,
+     0x99, 0x04, 0x00, 0x01, 0x02, 0x03];
+ 
+@@ -560,20 +575,21 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Get Input
+  */
+ add_test(function test_stk_proactive_command_get_input() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
+-  let stkCmdHelper = worker.StkCommandParamsFactory;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
++  let stkCmdHelper = context.StkCommandParamsFactory;
+ 
+   let get_input_1 = [
+     0xD0,
+     0x1E,
+     0x81, 0x03, 0x01, 0x23, 0x8F,
+     0x82, 0x02, 0x81, 0x82,
+     0x8D, 0x05, 0x04, 0x54, 0x65, 0x78, 0x74,
+     0x91, 0x02, 0x01, 0x10,
+@@ -628,19 +644,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : More Time
+  */
+ add_test(function test_stk_proactive_command_more_time() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   let more_time_1 = [
+     0xD0,
+     0x09,
+     0x81, 0x03, 0x01, 0x02, 0x00,
+     0x82, 0x02, 0x81, 0x82];
+ 
+   for(let i = 0 ; i < more_time_1.length; i++) {
+@@ -657,20 +674,21 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Select Item
+  */
+ add_test(function test_stk_proactive_command_select_item() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
+-  let stkFactory = worker.StkCommandParamsFactory;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
++  let stkFactory = context.StkCommandParamsFactory;
+ 
+   let select_item_1 = [
+     0xD0,
+     0x33,
+     0x81, 0x03, 0x01, 0x24, 0x00,
+     0x82, 0x02, 0x81, 0x82,
+     0x85, 0x05, 0x54, 0x69, 0x74, 0x6C, 0x65,
+     0x8F, 0x07, 0x01, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x31,
+@@ -744,20 +762,21 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Set Up Menu
+  */
+ add_test(function test_stk_proactive_command_set_up_menu() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
+-  let stkFactory = worker.StkCommandParamsFactory;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
++  let stkFactory = context.StkCommandParamsFactory;
+ 
+   let set_up_menu_1 = [
+     0xD0,
+     0x30,
+     0x81, 0x03, 0x01, 0x25, 0x00,
+     0x82, 0x02, 0x81, 0x82,
+     0x85, 0x05, 0x54, 0x69, 0x74, 0x6C, 0x65,
+     0x8F, 0x07, 0x01, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x31,
+@@ -827,20 +846,21 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Set Up Call
+  */
+ add_test(function test_stk_proactive_command_set_up_call() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
+-  let cmdFactory = worker.StkCommandParamsFactory;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
++  let cmdFactory = context.StkCommandParamsFactory;
+ 
+   let set_up_call_1 = [
+     0xD0,
+     0x29,
+     0x81, 0x03, 0x01, 0x10, 0x04,
+     0x82, 0x02, 0x81, 0x82,
+     0x05, 0x0A, 0x44, 0x69, 0x73, 0x63, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74,
+     0x86, 0x09, 0x81, 0x10, 0x32, 0x04, 0x21, 0x43, 0x65, 0x1C, 0x2C,
+@@ -864,19 +884,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Timer Management
+  */
+ add_test(function test_stk_proactive_command_timer_management() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   // Timer Management - Start
+   let timer_management_1 = [
+     0xD0,
+     0x11,
+     0x81, 0x03, 0x01, 0x27, 0x00,
+     0x82, 0x02, 0x81, 0x82,
+     0xA4, 0x01, 0x01,
+@@ -926,19 +947,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive Command : Provide Local Information
+  */
+ add_test(function test_stk_proactive_command_provide_local_information() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   // Verify IMEI
+   let local_info_1 = [
+     0xD0,
+     0x09,
+     0x81, 0x03, 0x01, 0x26, 0x01,
+     0x82, 0x02, 0x81, 0x82];
+ 
+@@ -974,19 +996,20 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Proactive command : BIP Messages
+  */
+ add_test(function test_stk_proactive_command_open_channel() {
+   let worker = newUint8Worker();
+-  let pduHelper = worker.GsmPDUHelper;
+-  let berHelper = worker.BerTlvHelper;
+-  let stkHelper = worker.StkProactiveCmdHelper;
++  let context = worker.ContextPool._contexts[0];
++  let pduHelper = context.GsmPDUHelper;
++  let berHelper = context.BerTlvHelper;
++  let stkHelper = context.StkProactiveCmdHelper;
+ 
+   // Open Channel
+   let open_channel = [
+     0xD0,
+     0x0F,
+     0x81, 0x03, 0x01, 0x40, 0x00,
+     0x82, 0x02, 0x81, 0x82,
+     0x85, 0x04, 0x4F, 0x70, 0x65, 0x6E //alpha id: "Open"
+@@ -1078,18 +1101,19 @@ add_test(function test_stk_proactive_com
+   run_next_test();
+ });
+ 
+ /**
+  * Verify Event Download Command : Location Status
+  */
+ add_test(function test_stk_event_download_location_status() {
+   let worker = newUint8SupportOutgoingIndexWorker();
+-  let buf = worker.Buf;
+-  let pduHelper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let pduHelper = context.GsmPDUHelper;
+ 
+   buf.sendParcel = function () {
+     // Type
+     do_check_eq(this.readInt32(), REQUEST_STK_SEND_ENVELOPE_COMMAND);
+ 
+     // Token : we don't care
+     this.readInt32();
+ 
+@@ -1148,31 +1172,32 @@ add_test(function test_stk_event_downloa
+     locationStatus: STK_SERVICE_STATE_NORMAL,
+     locationInfo: {
+       mcc: "123",
+       mnc: "456",
+       gsmLocationAreaCode: 0,
+       gsmCellId: 0
+     }
+   };
+-  worker.RIL.sendStkEventDownload({
++  context.RIL.sendStkEventDownload({
+     event: event
+   });
+ });
+ 
+ // Test Event Download commands.
+ 
+ /**
+  * Verify Event Download Command : Language Selection
+  */
+ add_test(function test_stk_event_download_language_selection() {
+   let worker = newUint8SupportOutgoingIndexWorker();
+-  let buf = worker.Buf;
+-  let pduHelper = worker.GsmPDUHelper;
+-  let iccHelper = worker.ICCPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let pduHelper = context.GsmPDUHelper;
++  let iccHelper = context.ICCPDUHelper;
+ 
+   buf.sendParcel = function () {
+     // Type
+     do_check_eq(this.readInt32(), REQUEST_STK_SEND_ENVELOPE_COMMAND);
+ 
+     // Token : we don't care
+     this.readInt32();
+ 
+@@ -1209,28 +1234,29 @@ add_test(function test_stk_event_downloa
+ 
+     run_next_test();
+   };
+ 
+   let event = {
+     eventType: STK_EVENT_TYPE_LANGUAGE_SELECTION,
+     language: "zh"
+   };
+-  worker.RIL.sendStkEventDownload({
++  context.RIL.sendStkEventDownload({
+     event: event
+   });
+ });
+ 
+ /**
+  * Verify Event Download Command : User Activity
+  */
+ add_test(function test_stk_event_download_user_activity() {
+   let worker = newUint8SupportOutgoingIndexWorker();
+-  let buf = worker.Buf;
+-  let pduHelper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let pduHelper = context.GsmPDUHelper;
+ 
+   buf.sendParcel = function () {
+     // Type
+     do_check_eq(this.readInt32(), REQUEST_STK_SEND_ENVELOPE_COMMAND);
+ 
+     // Token : we don't care
+     this.readInt32();
+ 
+@@ -1257,28 +1283,29 @@ add_test(function test_stk_event_downloa
+     do_check_eq(pduHelper.readHexOctet(), STK_EVENT_TYPE_USER_ACTIVITY);
+ 
+     run_next_test();
+   };
+ 
+   let event = {
+     eventType: STK_EVENT_TYPE_USER_ACTIVITY
+   };
+-  worker.RIL.sendStkEventDownload({
++  context.RIL.sendStkEventDownload({
+     event: event
+   });
+ });
+ 
+ /**
+  * Verify Event Download Command : Idle Screen Available
+  */
+ add_test(function test_stk_event_download_idle_screen_available() {
+   let worker = newUint8SupportOutgoingIndexWorker();
+-  let buf = worker.Buf;
+-  let pduHelper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let pduHelper = context.GsmPDUHelper;
+ 
+   buf.sendParcel = function () {
+     // Type
+     do_check_eq(this.readInt32(), REQUEST_STK_SEND_ENVELOPE_COMMAND);
+ 
+     // Token : we don't care
+     this.readInt32();
+ 
+@@ -1305,28 +1332,29 @@ add_test(function test_stk_event_downloa
+     do_check_eq(pduHelper.readHexOctet(), STK_EVENT_TYPE_IDLE_SCREEN_AVAILABLE);
+ 
+     run_next_test();
+   };
+ 
+   let event = {
+     eventType: STK_EVENT_TYPE_IDLE_SCREEN_AVAILABLE
+   };
+-  worker.RIL.sendStkEventDownload({
++  context.RIL.sendStkEventDownload({
+     event: event
+   });
+ });
+ 
+ /**
+  * Verify Event Downloaded Command :Browser Termination
+  */
+ add_test(function test_stk_event_download_browser_termination() {
+   let worker = newUint8SupportOutgoingIndexWorker();
+-  let buf = worker.Buf;
+-  let pduHelper = worker.GsmPDUHelper;
++  let context = worker.ContextPool._contexts[0];
++  let buf = context.Buf;
++  let pduHelper = context.GsmPDUHelper;
+ 
+   buf.sendParcel = function () {
+     // Type
+     do_check_eq(this.readInt32(), REQUEST_STK_SEND_ENVELOPE_COMMAND);
+ 
+     // Token : we don't care
+     this.readInt32();
+ 
+@@ -1362,12 +1390,12 @@ add_test(function test_stk_event_downloa
+ 
+     run_next_test();
+   };
+ 
+   let event = {
+     eventType: STK_EVENT_TYPE_BROWSER_TERMINATION,
+     terminationCause: STK_BROWSER_TERMINATION_CAUSE_USER
+   };
+-  worker.RIL.sendStkEventDownload({
++  context.RIL.sendStkEventDownload({
+     event: event
+   });
+ });
+diff --git a/dom/system/gonk/tests/test_ril_worker_voiceprivacy.js b/dom/system/gonk/tests/test_ril_worker_voiceprivacy.js
+--- a/dom/system/gonk/tests/test_ril_worker_voiceprivacy.js
++++ b/dom/system/gonk/tests/test_ril_worker_voiceprivacy.js
+@@ -24,92 +24,96 @@ function _getWorker() {
+       return _worker;
+     }
+   };
+ }
+ 
+ add_test(function test_setVoicePrivacyMode_success() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setVoicePrivacyMode = function fakeSetVoicePrivacyMode(options) {
+-    worker.RIL[REQUEST_CDMA_SET_PREFERRED_VOICE_PRIVACY_MODE](0, {
++  context.RIL.setVoicePrivacyMode = function fakeSetVoicePrivacyMode(options) {
++    context.RIL[REQUEST_CDMA_SET_PREFERRED_VOICE_PRIVACY_MODE](0, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.setVoicePrivacyMode({
++  context.RIL.setVoicePrivacyMode({
+     enabled: true
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_setVoicePrivacyMode_generic_failure() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.RIL.setVoicePrivacyMode = function fakeSetVoicePrivacyMode(options) {
+-    worker.RIL[REQUEST_CDMA_SET_PREFERRED_VOICE_PRIVACY_MODE](0, {
++  context.RIL.setVoicePrivacyMode = function fakeSetVoicePrivacyMode(options) {
++    context.RIL[REQUEST_CDMA_SET_PREFERRED_VOICE_PRIVACY_MODE](0, {
+       rilRequestError: ERROR_GENERIC_FAILURE
+     });
+   };
+ 
+-  worker.RIL.setVoicePrivacyMode({
++  context.RIL.setVoicePrivacyMode({
+     enabled: true
+   });
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, "GenericFailure");
+ 
+   run_next_test();
+ });
+ 
+ add_test(function test_queryVoicePrivacyMode_success_enabled_true() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32List = function fakeReadUint32List() {
++  context.Buf.readInt32List = function fakeReadUint32List() {
+     return [1];
+   };
+ 
+-  worker.RIL.queryVoicePrivacyMode = function fakeQueryVoicePrivacyMode(options) {
+-    worker.RIL[REQUEST_CDMA_QUERY_PREFERRED_VOICE_PRIVACY_MODE](1, {
++  context.RIL.queryVoicePrivacyMode = function fakeQueryVoicePrivacyMode(options) {
++    context.RIL[REQUEST_CDMA_QUERY_PREFERRED_VOICE_PRIVACY_MODE](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.queryVoicePrivacyMode();
++  context.RIL.queryVoicePrivacyMode();
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_true(postedMessage.enabled);
+   run_next_test();
+ });
+ 
+ add_test(function test_queryVoicePrivacyMode_success_enabled_false() {
+   let workerHelper = _getWorker();
+   let worker = workerHelper.worker;
++  let context = worker.ContextPool._contexts[0];
+ 
+-  worker.Buf.readInt32List = function fakeReadUint32List() {
++  context.Buf.readInt32List = function fakeReadUint32List() {
+     return [0];
+   };
+ 
+-  worker.RIL.queryVoicePrivacyMode = function fakeQueryVoicePrivacyMode(options) {
+-    worker.RIL[REQUEST_CDMA_QUERY_PREFERRED_VOICE_PRIVACY_MODE](1, {
++  context.RIL.queryVoicePrivacyMode = function fakeQueryVoicePrivacyMode(options) {
++    context.RIL[REQUEST_CDMA_QUERY_PREFERRED_VOICE_PRIVACY_MODE](1, {
+       rilRequestError: ERROR_SUCCESS
+     });
+   };
+ 
+-  worker.RIL.queryVoicePrivacyMode();
++  context.RIL.queryVoicePrivacyMode();
+ 
+   let postedMessage = workerHelper.postedMessage;
+ 
+   do_check_eq(postedMessage.errorMsg, undefined);
+   do_check_false(postedMessage.enabled);
+   run_next_test();
+ });

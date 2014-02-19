@@ -1,0 +1,91 @@
+# HG changeset patch
+# Parent f2ec565886c0f4b6ace8ba55a4981fdddbe9c0e7
+# User Vicamo Yang <vyang@mozilla.com>
+Bug 960894 - 3.d.2/4: use 'this.context.clientId'. r=hsinyi, a=fabrice
+
+diff --git a/dom/system/gonk/ril_worker.js b/dom/system/gonk/ril_worker.js
+--- a/dom/system/gonk/ril_worker.js
++++ b/dom/system/gonk/ril_worker.js
+@@ -38,23 +38,23 @@
+ 
+ "use strict";
+ 
+ importScripts("ril_consts.js");
+ importScripts("resource://gre/modules/workers/require.js");
+ 
+ // set to true in ril_consts.js to see debug messages
+ let DEBUG = DEBUG_WORKER;
+-let CLIENT_ID = -1;
++let clientId = -1;
+ let GLOBAL = this;
+ 
+ if (!this.debug) {
+   // Debugging stub that goes nowhere.
+   this.debug = function debug(message) {
+-    dump("RIL Worker[" + CLIENT_ID + "]: " + message + "\n");
++    dump("RIL Worker[" + clientId + "]: " + message + "\n");
+   };
+ }
+ 
+ let RIL_CELLBROADCAST_DISABLED;
+ let RIL_CLIR_MODE;
+ let RIL_EMERGENCY_NUMBERS;
+ const DEFAULT_EMERGENCY_NUMBERS = ["112", "911"];
+ 
+@@ -180,17 +180,17 @@ BufObject.prototype = {
+   },
+ 
+   simpleRequest: function simpleRequest(type, options) {
+     this.newParcel(type, options);
+     this.sendParcel();
+   },
+ 
+   onSendParcel: function onSendParcel(parcel) {
+-    postRILMessage(CLIENT_ID, parcel);
++    postRILMessage(this.context.clientId, parcel);
+   }
+ };
+ 
+ (function() {
+   let base = require("resource://gre/modules/workers/worker_buf.js").Buf;
+   for (let p in base) {
+     BufObject.prototype[p] = base[p];
+   }
+@@ -4965,17 +4965,17 @@ RilObject.prototype = {
+       this.context.StkCommandParamsFactory.createParam(cmdDetails, ctlvs);
+     this.sendChromeMessage(cmdDetails);
+   },
+ 
+   /**
+    * Send messages to the main thread.
+    */
+   sendChromeMessage: function sendChromeMessage(message) {
+-    message.rilMessageClientId = CLIENT_ID;
++    message.rilMessageClientId = this.context.clientId;
+     postMessage(message);
+   },
+ 
+   /**
+    * Handle incoming requests from the RIL. We find the method that
+    * corresponds to the request type. Incidentally, the request type
+    * _is_ the method name, so that's easy.
+    */
+@@ -5001,17 +5001,17 @@ RilObject.prototype = {
+     RILQUIRKS_SIM_APP_STATE_EXTRA_FIELDS = quirks.simAppStateExtraFields;
+     RILQUIRKS_EXTRA_UINT32_2ND_CALL = quirks.extraUint2ndCall;
+     RILQUIRKS_HAVE_QUERY_ICC_LOCK_RETRY_COUNT = quirks.haveQueryIccLockRetryCount;
+     RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD = quirks.sendStkProfileDownload;
+     RILQUIRKS_DATA_REGISTRATION_ON_DEMAND = quirks.dataRegistrationOnDemand;
+   },
+ 
+   registerClient: function registerClient(aOptions) {
+-    CLIENT_ID = aOptions.clientId;
++    this.context.clientId = aOptions.clientId;
+ 
+     // Init properties that are only initialized once.
+     this.v5Legacy = RILQUIRKS_V5_LEGACY;
+     this.cellBroadcastDisabled = RIL_CELLBROADCAST_DISABLED;
+     this.clirMode = RIL_CLIR_MODE;
+ 
+     this.initRILState();
+   }

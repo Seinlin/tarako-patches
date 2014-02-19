@@ -1,0 +1,157 @@
+# HG changeset patch
+# Parent 15e177f995656b8d96db613aa2b2747b5775cd70
+# User Vicamo Yang <vyang@mozilla.com>
+Bug 960894 - 1/4: allow representing multiple clients in one RIL worker. r=bz, a=fabrice
+
+diff --git a/dom/system/gonk/ril_worker.js b/dom/system/gonk/ril_worker.js
+--- a/dom/system/gonk/ril_worker.js
++++ b/dom/system/gonk/ril_worker.js
+@@ -13691,17 +13691,17 @@ let ICCContactHelper = {
+ /**
+  * Global stuff.
+  */
+ 
+ // Initialize buffers. This is a separate function so that unit tests can
+ // re-initialize the buffers at will.
+ Buf.init();
+ 
+-function onRILMessage(data) {
++function onRILMessage(/*unused*/aClientId, data) {
+   Buf.processIncoming(data);
+ }
+ 
+ onmessage = function onmessage(event) {
+   RIL.handleChromeMessage(event.data);
+ };
+ 
+ onerror = function onerror(event) {
+diff --git a/ipc/ril/Ril.cpp b/ipc/ril/Ril.cpp
+--- a/ipc/ril/Ril.cpp
++++ b/ipc/ril/Ril.cpp
+@@ -15,22 +15,25 @@
+ #if defined(MOZ_WIDGET_GONK)
+ #include <android/log.h>
+ #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk", args)
+ #else
+ #define LOG(args...)  printf(args);
+ #endif
+ 
+ #include "jsfriendapi.h"
++#include "mozilla/ArrayUtils.h"
+ #include "nsTArray.h"
+ #include "nsThreadUtils.h" // For NS_IsMainThread.
+ 
+ USING_WORKERS_NAMESPACE
+ using namespace mozilla::ipc;
+ 
++using mozilla::ArrayLength;
++
+ namespace {
+ 
+ const char* RIL_SOCKET_NAME = "/dev/socket/rilproxy";
+ 
+ // Network port to connect to for adb forwarded sockets when doing
+ // desktop development.
+ const uint32_t RIL_TEST_PORT = 6200;
+ 
+@@ -136,49 +139,74 @@ PostToRIL(JSContext *aCx,
+ 
+ bool
+ ConnectWorkerToRIL::RunTask(JSContext *aCx)
+ {
+     // Set up the postRILMessage on the function for worker -> RIL thread
+     // communication.
+     NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
+     NS_ASSERTION(!JS_IsRunning(aCx), "Are we being called somehow?");
+-    JSObject *workerGlobal = JS::CurrentGlobalOrNull(aCx);
++    JS::Rooted<JSObject*> workerGlobal(aCx, JS::CurrentGlobalOrNull(aCx));
++
++    // Check whether |postRILMessage| has been defined.  No one but this class
++    // should ever define |postRILMessage| in a RIL worker, so we call to
++    // |JS_LookupProperty| instead of |JS_GetProperty| here.
++    JS::Rooted<JS::Value> val(aCx);
++    if (!JS_LookupProperty(aCx, workerGlobal, "postRILMessage", &val)) {
++        JS_ReportPendingException(aCx);
++        return false;
++    }
++
++    // |JS_LookupProperty| could still return JS_TRUE with an "undefined"
++    // |postRILMessage|, so we have to make sure that with an additional call
++    // to |JS_TypeOfValue|.
++    if (JSTYPE_FUNCTION == JS_TypeOfValue(aCx, val)) {
++        return true;
++    }
+ 
+     return !!JS_DefineFunction(aCx, workerGlobal,
+                                "postRILMessage", PostToRIL, 2, 0);
+ }
+ 
+ class DispatchRILEvent : public WorkerTask
+ {
+ public:
+-        DispatchRILEvent(UnixSocketRawData* aMessage)
+-            : mMessage(aMessage)
++        DispatchRILEvent(unsigned long aClient,
++                         UnixSocketRawData* aMessage)
++            : mClientId(aClient)
++            , mMessage(aMessage)
+         { }
+ 
+         virtual bool RunTask(JSContext *aCx);
+ 
+ private:
++        unsigned long mClientId;
+         nsAutoPtr<UnixSocketRawData> mMessage;
+ };
+ 
+ bool
+ DispatchRILEvent::RunTask(JSContext *aCx)
+ {
+     JSObject *obj = JS::CurrentGlobalOrNull(aCx);
+ 
+     JSObject *array = JS_NewUint8Array(aCx, mMessage->mSize);
+     if (!array) {
+         return false;
+     }
++    memcpy(JS_GetArrayBufferViewData(array), mMessage->mData, mMessage->mSize);
+ 
+-    memcpy(JS_GetArrayBufferViewData(array), mMessage->mData, mMessage->mSize);
+-    JS::Value argv[] = { OBJECT_TO_JSVAL(array) };
+-    return JS_CallFunctionName(aCx, obj, "onRILMessage", NS_ARRAY_LENGTH(argv),
+-                               argv, argv);
++    JS::Value argv[] = {
++        INT_TO_JSVAL(mClientId),
++        OBJECT_TO_JSVAL(array)
++    };
++    JS::AutoArrayRooter rooter(aCx, ArrayLength(argv), argv);
++
++    JS::Rooted<JS::Value> rval(aCx);
++    return JS_CallFunctionName(aCx, obj, "onRILMessage", ArrayLength(argv),
++                               argv, rval.address());
+ }
+ 
+ class RilConnector : public mozilla::ipc::UnixSocketConnector
+ {
+ public:
+   RilConnector(unsigned long aClientId) : mClientId(aClientId)
+   {}
+ 
+@@ -348,17 +376,17 @@ RilConsumer::Shutdown()
+     }
+ }
+ 
+ void
+ RilConsumer::ReceiveSocketData(nsAutoPtr<UnixSocketRawData>& aMessage)
+ {
+     MOZ_ASSERT(NS_IsMainThread());
+ 
+-    nsRefPtr<DispatchRILEvent> dre(new DispatchRILEvent(aMessage.forget()));
++    nsRefPtr<DispatchRILEvent> dre(new DispatchRILEvent(mClientId, aMessage.forget()));
+     mDispatcher->PostTask(dre);
+ }
+ 
+ void
+ RilConsumer::OnConnectSuccess()
+ {
+     // Nothing to do here.
+     LOG("RIL[%lu]: %s\n", mClientId, __FUNCTION__);

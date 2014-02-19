@@ -1,0 +1,35 @@
+# HG changeset patch
+# Parent eceb52cad993b5e2bb7b5ee7a8ae287e56276c7f
+# User Vicamo Yang <vyang@mozilla.com>
+Bug 960894 - 3.f/4: really merge all RIL worker instances into one. r=hsinyi, a=fabrice
+
+diff --git a/dom/system/gonk/RadioInterfaceLayer.js b/dom/system/gonk/RadioInterfaceLayer.js
+--- a/dom/system/gonk/RadioInterfaceLayer.js
++++ b/dom/system/gonk/RadioInterfaceLayer.js
+@@ -748,23 +748,23 @@ CdmaIccInfo.prototype = {
+ 
+   mdn: null
+ };
+ 
+ function RadioInterfaceLayer() {
+   gMessageManager.init(this);
+   gRadioEnabledController.init(this);
+ 
++  let workerMessenger = new WorkerMessenger();
++  workerMessenger.init();
++
+   let numIfaces = this.numRadioInterfaces;
+   debug(numIfaces + " interfaces");
+   this.radioInterfaces = [];
+   for (let clientId = 0; clientId < numIfaces; clientId++) {
+-    let workerMessenger = new WorkerMessenger();
+-    workerMessenger.init();
+-
+     this.radioInterfaces.push(new RadioInterface(clientId, workerMessenger));
+   }
+ 
+   // TODO: Move 'ril.data.*' settings handler to DataConnectionManager,
+   // see bug 905568.
+   let lock = gSettingsService.createLock();
+   // Read the data enabled setting from DB.
+   lock.get("ril.data.enabled", this);

@@ -1,0 +1,87 @@
+# HG changeset patch
+# Parent 0e42c95c5e7dd41aa52e9b31a519d102e2ed366c
+# User Vicamo Yang <vyang@mozilla.com>
+Bug 960894 - 3.a/4: Move PENDING_NETWORK_TYPE into RIL and rename to pendingNetworkType. r=hsinyi, a=fabrice
+
+diff --git a/dom/system/gonk/ril_worker.js b/dom/system/gonk/ril_worker.js
+--- a/dom/system/gonk/ril_worker.js
++++ b/dom/system/gonk/ril_worker.js
+@@ -87,19 +87,16 @@ let RILQUIRKS_EXTRA_UINT32_2ND_CALL;
+ let RILQUIRKS_HAVE_QUERY_ICC_LOCK_RETRY_COUNT;
+ 
+ // Ril quirk to Send STK Profile Download
+ let RILQUIRKS_SEND_STK_PROFILE_DOWNLOAD;
+ 
+ // Ril quirk to attach data registration on demand.
+ let RILQUIRKS_DATA_REGISTRATION_ON_DEMAND;
+ 
+-// Marker object.
+-let PENDING_NETWORK_TYPE = {};
+-
+ let Buf = {
+   __proto__: (function(){
+     return require("resource://gre/modules/workers/worker_buf.js").Buf;
+   })(),
+ 
+   mToken: 0,
+   mTokenRequestMap: null,
+ 
+@@ -226,16 +223,21 @@ let RIL = {
+ 
+   /**
+    * Index of the RIL_PREFERRED_NETWORK_TYPE_TO_GECKO. Its value should be
+    * preserved over rild reset.
+    */
+   preferredNetworkType: null,
+ 
+   /**
++   * Marker object.
++   */
++  pendingNetworkType: {},
++
++  /**
+    * Global Cell Broadcast switch.
+    */
+   cellBroadcastDisabled: false,
+ 
+   /**
+    * Global CLIR mode settings.
+    */
+   clirMode: CLIR_DEFAULT,
+@@ -3135,34 +3137,34 @@ let RIL = {
+     if (!this._processingNetworkInfo) {
+       return;
+     }
+ 
+     let pending = this._pendingNetworkInfo;
+ 
+     // We still need to track states for events that aren't fired.
+     if (!(type in pending)) {
+-      pending[type] = PENDING_NETWORK_TYPE;
++      pending[type] = this.pendingNetworkType;
+     }
+ 
+     // Pending network info is ready to be sent when no more messages
+     // are waiting for responses, but the combined payload hasn't been sent.
+     for (let i = 0; i < NETWORK_INFO_MESSAGE_TYPES.length; i++) {
+       let msgType = NETWORK_INFO_MESSAGE_TYPES[i];
+       if (!(msgType in pending)) {
+         if (DEBUG) debug("Still missing some more network info, not notifying main thread.");
+         return;
+       }
+     }
+ 
+     // Do a pass to clean up the processed messages that didn't create
+     // a response message, so we don't have unused keys in the outbound
+     // networkinfochanged message.
+     for (let key in pending) {
+-      if (pending[key] == PENDING_NETWORK_TYPE) {
++      if (pending[key] == this.pendingNetworkType) {
+         delete pending[key];
+       }
+     }
+ 
+     if (DEBUG) debug("All pending network info has been received: " + JSON.stringify(pending));
+ 
+     // Send the message on the next tick of the worker's loop, so we give the
+     // last message a chance to call _sendNetworkInfoMessage first.
