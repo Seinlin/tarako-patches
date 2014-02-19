@@ -1,19 +1,21 @@
-From a921b9cc2a31f9d9bf058cc8c66438605d6a0974 Mon Sep 17 00:00:00 2001
+From d8f38c1380c3cef1b0d12ef4ef17711bb4a3d985 Mon Sep 17 00:00:00 2001
 From: vincentliu <vliu@mozilla.com>
-Date: Thu, 13 Feb 2014 17:47:17 +0800
-Subject: [PATCH] Modify Bug-957509-Reduce-USS-of-Nuwa-and-preallocated-proce
+Date: Wed, 19 Feb 2014 15:27:47 +0800
+Subject: [PATCH] Modify
+ 0008-Bug-957509-Reduce-USS-of-Nuwa-and-preallocated-proce
+ due to patch fail
 
 ---
- dom/ipc/ContentChild.cpp  |    8 ++++++++
+ dom/ipc/ContentChild.cpp  |    9 ++++++++-
  dom/ipc/ContentParent.cpp |   17 +++++++----------
  dom/ipc/ContentParent.h   |    5 ++---
- 3 files changed, 17 insertions(+), 13 deletions(-)
+ 3 files changed, 17 insertions(+), 14 deletions(-)
 
 diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
-index c3a53b2..622a418 100644
+index 42d4023..7a81859 100644
 --- a/dom/ipc/ContentChild.cpp
 +++ b/dom/ipc/ContentChild.cpp
-@@ -698,6 +698,10 @@ ContentChild::RecvPBrowserConstructor(PBrowserChild* actor,
+@@ -721,6 +721,10 @@ ContentChild::RecvPBrowserConstructor(PBrowserChild* actor,
          MOZ_ASSERT(!sFirstIdleTask);
          sFirstIdleTask = NewRunnableFunction(FirstIdle);
          MessageLoop::current()->PostIdleTask(FROM_HERE, sFirstIdleTask);
@@ -24,11 +26,12 @@ index c3a53b2..622a418 100644
      }
  
      return true;
-@@ -1598,6 +1602,10 @@ public:
+@@ -1640,7 +1644,10 @@ public:
  
-             toplevel = toplevel->getNext();
-         }
-+
+         // Perform other after-fork initializations.
+         InitOnContentProcessCreated();
+-
++        
 +        // Don't perform GC in the preallocated process to avoid touching
 +        // COW pages.
 +        nsJSContext::DisableGC();
@@ -36,10 +39,10 @@ index c3a53b2..622a418 100644
      }
  };
 diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
-index b789aa4..1bfa38a 100644
+index 042fb3c..84ae759 100644
 --- a/dom/ipc/ContentParent.cpp
 +++ b/dom/ipc/ContentParent.cpp
-@@ -1299,8 +1299,7 @@ ContentParent::ContentParent(mozIApplication* aApp,
+@@ -1287,8 +1287,7 @@ ContentParent::ContentParent(mozIApplication* aApp,
      Open(mSubprocess->GetChannel(), mSubprocess->GetOwnedChildProcessHandle());
  
      InitInternal(aInitialPriority,
@@ -49,7 +52,7 @@ index b789aa4..1bfa38a 100644
  }
  
  #ifdef MOZ_NUWA_PROCESS
-@@ -1372,8 +1371,7 @@ ContentParent::ContentParent(ContentParent* aTemplate,
+@@ -1360,8 +1359,7 @@ ContentParent::ContentParent(ContentParent* aTemplate,
      }
  
      InitInternal(priority,
@@ -59,7 +62,7 @@ index b789aa4..1bfa38a 100644
  }
  #endif  // MOZ_NUWA_PROCESS
  
-@@ -1405,8 +1403,7 @@ ContentParent::~ContentParent()
+@@ -1393,8 +1391,7 @@ ContentParent::~ContentParent()
  
  void
  ContentParent::InitInternal(ProcessPriority aInitialPriority,
@@ -69,7 +72,7 @@ index b789aa4..1bfa38a 100644
  {
      // Set the subprocess's priority.  We do this early on because we're likely
      // /lowering/ the process's CPU and memory priority, which it has inherited
-@@ -1416,7 +1413,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+@@ -1404,7 +1401,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
      // must come after the Open() call above.
      ProcessPriorityManager::SetProcessPriority(this, aInitialPriority);
  
@@ -78,7 +81,7 @@ index b789aa4..1bfa38a 100644
          // NB: internally, this will send an IPC message to the child
          // process to get it to create the CompositorChild.  This
          // message goes through the regular IPC queue for this
-@@ -1437,7 +1434,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+@@ -1425,7 +1422,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
          }
      }
  
@@ -87,7 +90,7 @@ index b789aa4..1bfa38a 100644
          nsCOMPtr<nsIChromeRegistry> registrySvc = nsChromeRegistry::GetService();
          nsChromeRegistryChrome* chromeRegistry =
              static_cast<nsChromeRegistryChrome*>(registrySvc.get());
-@@ -1446,7 +1443,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+@@ -1434,7 +1431,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
  
      mMessageManager = nsFrameMessageManager::NewProcessMessageManager(this);
  
@@ -96,7 +99,7 @@ index b789aa4..1bfa38a 100644
          nsCString version(gAppData->version);
          nsCString buildID(gAppData->buildID);
          nsCString name(gAppData->name);
-@@ -1457,7 +1454,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
+@@ -1445,7 +1442,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
      }
  
      nsStyleSheetService *sheetService = nsStyleSheetService::GetInstance();
@@ -106,10 +109,10 @@ index b789aa4..1bfa38a 100644
          // send two loads.
  
 diff --git a/dom/ipc/ContentParent.h b/dom/ipc/ContentParent.h
-index 660dde1..77e79ff 100644
+index 7d6a3f0..27ce74a 100644
 --- a/dom/ipc/ContentParent.h
 +++ b/dom/ipc/ContentParent.h
-@@ -271,10 +271,9 @@ private:
+@@ -274,10 +274,9 @@ private:
      // The common initialization for the constructors.
      void InitializeMembers();
  
