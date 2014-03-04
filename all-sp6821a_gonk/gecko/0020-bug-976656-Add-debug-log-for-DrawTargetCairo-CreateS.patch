@@ -1,0 +1,39 @@
+From ddb9e310280c3d3a45ea6442a8dc860ad64e971a Mon Sep 17 00:00:00 2001
+From: dannyliang <dliang@mozilla.com>
+Date: Tue, 4 Mar 2014 18:43:41 +0800
+Subject: [PATCH] bug 976656 - Add debug log for
+ DrawTargetCairo::CreateSourceSurfaceFromNativeSurface
+
+---
+ gfx/2d/DrawTargetCairo.cpp |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/gfx/2d/DrawTargetCairo.cpp b/gfx/2d/DrawTargetCairo.cpp
+index fe98e2c..7fde004 100644
+--- a/gfx/2d/DrawTargetCairo.cpp
++++ b/gfx/2d/DrawTargetCairo.cpp
+@@ -34,6 +34,7 @@
+ #endif
+ 
+ #include <algorithm>
++#include "nsDebug.h"
+ 
+ namespace mozilla {
+ namespace gfx {
+@@ -1099,9 +1100,13 @@ DrawTargetCairo::CreateSourceSurfaceFromNativeSurface(const NativeSurface &aSurf
+   if (aSurface.mType == NATIVE_SURFACE_CAIRO_SURFACE) {
+     IntSize size;
+     cairo_surface_t* surf = static_cast<cairo_surface_t*>(aSurface.mSurface);
++    if (!surf)
++      printf_stderr("DrawTargetCairo %d: surf = null", __LINE__);
+     if (GetCairoSurfaceSize(surf, size)) {
+       RefPtr<SourceSurfaceCairo> source =
+         new SourceSurfaceCairo(surf, size, aSurface.mFormat);
++      if (!source)
++        printf_stderr("DrawTargetCairo %d: source = null", __LINE__);
+       return source;
+     }
+   }
+-- 
+1.7.9.5
+
