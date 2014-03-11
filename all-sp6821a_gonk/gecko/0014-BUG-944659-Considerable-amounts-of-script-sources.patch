@@ -1,6 +1,6 @@
-From 9708022ef209192f0ee56363a62a66dbd3200297 Mon Sep 17 00:00:00 2001
-From: thomastsai <thomas@life100.cc>
-Date: Tue, 21 Jan 2014 15:59:20 +0800
+From 78276b20f8895ffd3571697f4ecd17f98fc8a948 Mon Sep 17 00:00:00 2001
+From: dannyliang <dliang@mozilla.com>
+Date: Tue, 11 Mar 2014 10:30:16 +0800
 Subject: [PATCH] BUG 944659-Considerable amounts of script-sources
 
 ---
@@ -12,7 +12,7 @@ Subject: [PATCH] BUG 944659-Considerable amounts of script-sources
  content/xul/document/src/XULDocument.cpp      |    4 +-
  content/xul/document/src/nsXULContentSink.cpp |    2 +-
  dom/workers/ScriptLoader.cpp                  |    1 +
- js/src/frontend/BytecodeCompiler.cpp          |   20 ++++++++-
+ js/src/frontend/BytecodeCompiler.cpp          |   18 +++++++-
  js/src/jsapi.cpp                              |   19 +++++++++
  js/src/jsapi.h                                |   11 ++++-
  js/src/jsfriendapi.h                          |    3 +-
@@ -22,13 +22,13 @@ Subject: [PATCH] BUG 944659-Considerable amounts of script-sources
  js/xpconnect/loader/mozJSComponentLoader.cpp  |   14 ++++--
  js/xpconnect/loader/mozJSSubScriptLoader.cpp  |   16 +++++--
  js/xpconnect/src/XPCJSRuntime.cpp             |   27 ++++++++----
- 18 files changed, 260 insertions(+), 27 deletions(-)
+ 18 files changed, 258 insertions(+), 27 deletions(-)
 
 diff --git a/content/base/src/nsFrameMessageManager.cpp b/content/base/src/nsFrameMessageManager.cpp
-index 4c1bcb5..7b33ec0 100644
+index ed44749..71a8aae 100644
 --- a/content/base/src/nsFrameMessageManager.cpp
 +++ b/content/base/src/nsFrameMessageManager.cpp
-@@ -1423,6 +1423,15 @@ nsFrameScriptExecutor::TryCacheLoadAndCompileScript(const nsAString& aURL,
+@@ -1432,6 +1432,15 @@ nsFrameScriptExecutor::TryCacheLoadAndCompileScript(const nsAString& aURL,
        options.setNoScriptRval(true)
               .setFileAndLine(url.get(), 1)
               .setPrincipals(nsJSPrincipals::get(mPrincipal));
@@ -45,7 +45,7 @@ index 4c1bcb5..7b33ec0 100644
          JS::Compile(cx, JS::NullPtr(), options, dataString.get(),
                      dataString.Length()));
 diff --git a/content/base/src/nsScriptLoader.cpp b/content/base/src/nsScriptLoader.cpp
-index e3f8c94..499a69d 100644
+index 1f352f5..921d1b6 100644
 --- a/content/base/src/nsScriptLoader.cpp
 +++ b/content/base/src/nsScriptLoader.cpp
 @@ -42,6 +42,7 @@
@@ -185,7 +185,7 @@ index a54009d..b66a96d 100644
  
  class nsAutoScriptLoaderDisabler
 diff --git a/content/xul/content/src/nsXULElement.cpp b/content/xul/content/src/nsXULElement.cpp
-index 03a4408..64df7ef 100644
+index 75304fd..ed37c75 100644
 --- a/content/xul/content/src/nsXULElement.cpp
 +++ b/content/xul/content/src/nsXULElement.cpp
 @@ -2600,6 +2600,7 @@ nsXULPrototypeScript::Compile(const PRUnichar* aText,
@@ -260,7 +260,7 @@ index adca134..19957ff 100644
  
          FlushText(false);
 diff --git a/dom/workers/ScriptLoader.cpp b/dom/workers/ScriptLoader.cpp
-index edee86a..c5a1c51 100644
+index ab97d56..c52e0b4 100644
 --- a/dom/workers/ScriptLoader.cpp
 +++ b/dom/workers/ScriptLoader.cpp
 @@ -731,6 +731,7 @@ ScriptExecutorRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
@@ -272,7 +272,7 @@ index edee86a..c5a1c51 100644
                        loadInfo.mScriptText.Length(), nullptr)) {
        return true;
 diff --git a/js/src/frontend/BytecodeCompiler.cpp b/js/src/frontend/BytecodeCompiler.cpp
-index 353f220..50d05bd 100644
+index bd41287..fc410f1 100644
 --- a/js/src/frontend/BytecodeCompiler.cpp
 +++ b/js/src/frontend/BytecodeCompiler.cpp
 @@ -141,7 +141,8 @@ CanLazilyParse(ExclusiveContext *cx, const ReadOnlyCompileOptions &options)
@@ -285,16 +285,16 @@ index 353f220..50d05bd 100644
          !(cx->compartment()->debugMode() &&
            cx->compartment()->runtimeFromAnyThread()->debugHooks.newScriptHook);
  }
-@@ -198,6 +199,8 @@ frontend::CompileScript(ExclusiveContext *cx, LifoAlloc *alloc, HandleObject sco
+@@ -168,6 +169,8 @@ frontend::CreateScriptSourceObject(ExclusiveContext *cx, const ReadOnlyCompileOp
          return nullptr;
      if (options.filename() && !ss->setFilename(cx, options.filename()))
          return nullptr;
 +    if (options.fileEncoding() && !ss->setFileEncoding(cx, options.fileEncoding()))
 +        return nullptr;
  
-     RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss, options));
-     if (!sourceObject)
-@@ -211,6 +214,12 @@ frontend::CompileScript(ExclusiveContext *cx, LifoAlloc *alloc, HandleObject sco
+     return ScriptSourceObject::create(cx, ss, options);
+ }
+@@ -219,6 +222,12 @@ frontend::CompileScript(ExclusiveContext *cx, LifoAlloc *alloc, HandleObject sco
          if (!ss->setSourceCopy(cx, chars, length, false, sct))
              return nullptr;
          break;
@@ -307,16 +307,7 @@ index 353f220..50d05bd 100644
        case CompileOptions::LAZY_SOURCE:
          ss->setSourceRetrievable();
          break;
-@@ -495,6 +504,8 @@ CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, const ReadOnlyComp
-         return false;
-     if (options.filename() && !ss->setFilename(cx, options.filename()))
-         return false;
-+    if (options.fileEncoding() && !ss->setFileEncoding(cx, options.fileEncoding()))
-+        return nullptr;
-     RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss, options));
-     if (!sourceObject)
-         return false;
-@@ -505,6 +516,13 @@ CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, const ReadOnlyComp
+@@ -511,6 +520,13 @@ CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, const ReadOnlyComp
              return false;
      }
  
@@ -331,10 +322,10 @@ index 353f220..50d05bd 100644
  
      Maybe<Parser<SyntaxParseHandler> > syntaxParser;
 diff --git a/js/src/jsapi.cpp b/js/src/jsapi.cpp
-index 93ad2c1..0c0242a 100644
+index 64b1889..00f8734 100644
 --- a/js/src/jsapi.cpp
 +++ b/js/src/jsapi.cpp
-@@ -4373,6 +4373,7 @@ JS::OwningCompileOptions::~OwningCompileOptions()
+@@ -4386,6 +4386,7 @@ JS::OwningCompileOptions::~OwningCompileOptions()
  
      // OwningCompileOptions always owns these, so these casts are okay.
      js_free(const_cast<char *>(filename_));
@@ -342,7 +333,7 @@ index 93ad2c1..0c0242a 100644
      js_free(const_cast<jschar *>(sourceMapURL_));
  }
  
-@@ -4386,6 +4387,7 @@ JS::OwningCompileOptions::copy(JSContext *cx, const ReadOnlyCompileOptions &rhs)
+@@ -4399,6 +4400,7 @@ JS::OwningCompileOptions::copy(JSContext *cx, const ReadOnlyCompileOptions &rhs)
      setElement(rhs.element());
  
      return (setFileAndLine(cx, rhs.filename(), rhs.lineno) &&
@@ -350,7 +341,7 @@ index 93ad2c1..0c0242a 100644
              setSourceMapURL(cx, rhs.sourceMapURL()));
  }
  
-@@ -4408,6 +4410,23 @@ JS::OwningCompileOptions::setFileAndLine(JSContext *cx, const char *f, unsigned
+@@ -4421,6 +4423,23 @@ JS::OwningCompileOptions::setFileAndLine(JSContext *cx, const char *f, unsigned
  }
  
  bool
@@ -375,10 +366,10 @@ index 93ad2c1..0c0242a 100644
  {
      jschar *copy = nullptr;
 diff --git a/js/src/jsapi.h b/js/src/jsapi.h
-index 101d469..faee6e6 100644
+index 06b63a7..1a8528a 100644
 --- a/js/src/jsapi.h
 +++ b/js/src/jsapi.h
-@@ -3407,6 +3407,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+@@ -3411,6 +3411,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
      JSPrincipals *principals_;
      JSPrincipals *originPrincipals_;
      const char *filename_;
@@ -386,7 +377,7 @@ index 101d469..faee6e6 100644
      const jschar *sourceMapURL_;
  
      // This constructor leaves 'version' set to JSVERSION_UNKNOWN. The structure
-@@ -3417,6 +3418,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+@@ -3421,6 +3422,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
        : principals_(nullptr),
          originPrincipals_(nullptr),
          filename_(nullptr),
@@ -394,7 +385,7 @@ index 101d469..faee6e6 100644
          sourceMapURL_(nullptr),
          version(JSVERSION_UNKNOWN),
          versionSet(false),
-@@ -3445,6 +3447,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+@@ -3450,6 +3452,7 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
      JSPrincipals *principals() const { return principals_; }
      JSPrincipals *originPrincipals() const;
      const char *filename() const { return filename_; }
@@ -402,7 +393,7 @@ index 101d469..faee6e6 100644
      const jschar *sourceMapURL() const { return sourceMapURL_; }
      virtual JSObject *element() const = 0;
      virtual JSString *elementProperty() const = 0;
-@@ -3467,7 +3470,8 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
+@@ -3473,7 +3476,8 @@ class JS_PUBLIC_API(ReadOnlyCompileOptions)
      enum SourcePolicy {
          NO_SOURCE,
          LAZY_SOURCE,
@@ -412,7 +403,7 @@ index 101d469..faee6e6 100644
      } sourcePolicy;
  
    private:
-@@ -3510,6 +3514,7 @@ class JS_PUBLIC_API(OwningCompileOptions) : public ReadOnlyCompileOptions
+@@ -3516,6 +3520,7 @@ class JS_PUBLIC_API(OwningCompileOptions) : public ReadOnlyCompileOptions
  
      /* These setters make copies of their string arguments, and are fallible. */
      bool setFileAndLine(JSContext *cx, const char *f, unsigned l);
@@ -420,7 +411,7 @@ index 101d469..faee6e6 100644
      bool setSourceMapURL(JSContext *cx, const jschar *s);
  
      /* These setters are infallible, and can be chained. */
-@@ -3564,6 +3569,7 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(CompileOptions) : public ReadOnlyCompileOpti
+@@ -3570,6 +3575,7 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(CompileOptions) : public ReadOnlyCompileOpti
          principals_ = rhs.principals();
          originPrincipals_ = rhs.originPrincipals();
          filename_ = rhs.filename();
@@ -428,7 +419,7 @@ index 101d469..faee6e6 100644
          sourceMapURL_ = rhs.sourceMapURL();
          elementRoot = rhs.element();
          elementPropertyRoot = rhs.elementProperty();
-@@ -3575,6 +3581,9 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(CompileOptions) : public ReadOnlyCompileOpti
+@@ -3581,6 +3587,9 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(CompileOptions) : public ReadOnlyCompileOpti
      CompileOptions &setFileAndLine(const char *f, unsigned l) {
          filename_ = f; lineno = l; return *this;
      }
@@ -453,10 +444,10 @@ index eb05652..e3bcdc6 100644
  
  /*
 diff --git a/js/src/jsscript.cpp b/js/src/jsscript.cpp
-index 5fa6e3e..2408067 100644
+index a654503..ff02b58 100644
 --- a/js/src/jsscript.cpp
 +++ b/js/src/jsscript.cpp
-@@ -1048,7 +1048,7 @@ JSScript::loadSource(JSContext *cx, ScriptSource *ss, bool *worked)
+@@ -1050,7 +1050,7 @@ JSScript::loadSource(JSContext *cx, ScriptSource *ss, bool *worked)
          return true;
      jschar *src = nullptr;
      size_t length;
@@ -465,7 +456,7 @@ index 5fa6e3e..2408067 100644
          return false;
      if (!src)
          return true;
-@@ -1155,9 +1155,39 @@ ScriptSource::chars(JSContext *cx, const SourceDataCache::AutoSuppressPurge &asp
+@@ -1157,9 +1157,39 @@ ScriptSource::chars(JSContext *cx, const SourceDataCache::AutoSuppressPurge &asp
          return decompressed;
      }
  #endif
@@ -505,7 +496,7 @@ index 5fa6e3e..2408067 100644
  JSStableString *
  ScriptSource::substring(JSContext *cx, uint32_t start, uint32_t stop)
  {
-@@ -1290,6 +1320,7 @@ ScriptSource::destroy()
+@@ -1292,6 +1322,7 @@ ScriptSource::destroy()
      JS_ASSERT(ready());
      adjustDataSize(0);
      js_free(filename_);
@@ -513,7 +504,7 @@ index 5fa6e3e..2408067 100644
      js_free(sourceURL_);
      js_free(sourceMapURL_);
      if (originPrincipals_)
-@@ -1439,6 +1470,16 @@ ScriptSource::setFilename(ExclusiveContext *cx, const char *filename)
+@@ -1441,6 +1472,16 @@ ScriptSource::setFilename(ExclusiveContext *cx, const char *filename)
  }
  
  bool
@@ -600,10 +591,10 @@ index 0f621b9..e76f684 100644
      bool setSourceURL(ExclusiveContext *cx, const jschar *sourceURL);
      const jschar *sourceURL();
 diff --git a/js/src/shell/js.cpp b/js/src/shell/js.cpp
-index bfc2548..23c309c 100644
+index 8e755cf..70a9351 100644
 --- a/js/src/shell/js.cpp
 +++ b/js/src/shell/js.cpp
-@@ -3897,7 +3897,9 @@ class ShellSourceHook: public SourceHook {
+@@ -3998,7 +3998,9 @@ class ShellSourceHook: public SourceHook {
              JS_RemoveObjectRootRT(rt, &fun);
      }
  
@@ -693,7 +684,7 @@ index ce348e7..a99f671 100644
          } else {
              *functionp = JS::CompileFunction(cx, target_obj, options,
 diff --git a/js/xpconnect/src/XPCJSRuntime.cpp b/js/xpconnect/src/XPCJSRuntime.cpp
-index 8a5af9b..06a84f5 100644
+index ade3f7b..8df9ffd 100644
 --- a/js/xpconnect/src/XPCJSRuntime.cpp
 +++ b/js/xpconnect/src/XPCJSRuntime.cpp
 @@ -2838,7 +2838,8 @@ PreserveWrapper(JSContext *cx, JSObject *obj)
