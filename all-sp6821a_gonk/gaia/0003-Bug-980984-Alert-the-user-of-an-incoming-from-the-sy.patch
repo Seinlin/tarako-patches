@@ -1,0 +1,152 @@
+From 63db5f03902cf408f37d923624d29fae9c9ac1f6 Mon Sep 17 00:00:00 2001
+From: dannyliang <dliang@mozilla.com>
+Date: Wed, 12 Mar 2014 16:12:50 +0800
+Subject: [PATCH] Bug 980984 - Alert the user of an incoming from the system
+ app
+
+---
+ apps/communications/dialer/js/calls_handler.js |   55 ------------------------
+ apps/communications/manifest.webapp            |    1 -
+ apps/system/index.html                         |    1 +
+ apps/system/js/bootstrap.js                    |    1 +
+ apps/system/manifest.webapp                    |    1 +
+ 5 files changed, 3 insertions(+), 56 deletions(-)
+
+diff --git a/apps/communications/dialer/js/calls_handler.js b/apps/communications/dialer/js/calls_handler.js
+index 1ae2b21..1693c3d 100755
+--- a/apps/communications/dialer/js/calls_handler.js
++++ b/apps/communications/dialer/js/calls_handler.js
+@@ -13,30 +13,8 @@ var CallsHandler = (function callsHandler() {
+   var telephony = window.navigator.mozTelephony;
+   telephony.oncallschanged = onCallsChanged;
+ 
+-  var settings = window.navigator.mozSettings;
+-
+   var displayed = false;
+   var closing = false;
+-  var ringing = false;
+-
+-  /* === Settings === */
+-  var activePhoneSound = null;
+-  SettingsListener.observe('audio.volume.notification', 7, function(value) {
+-    activePhoneSound = !!value;
+-    if (ringing && activePhoneSound) {
+-      ringtonePlayer.play();
+-    }
+-  });
+-
+-  var phoneSoundURL = new SettingsURL();
+-  SettingsListener.observe('dialer.ringtone', '', function(value) {
+-    ringtonePlayer.pause();
+-    ringtonePlayer.src = phoneSoundURL.set(value);
+-
+-    if (ringing && activePhoneSound) {
+-      ringtonePlayer.play();
+-    }
+-  });
+ 
+   // Setting up the SimplePhoneMatcher
+   // XXX: check bug-926169
+@@ -51,16 +29,6 @@ var CallsHandler = (function callsHandler() {
+ 
+   var btHelper = new BluetoothHelper();
+ 
+-  var ringtonePlayer = new Audio();
+-  ringtonePlayer.mozAudioChannelType = 'ringer';
+-  ringtonePlayer.src = phoneSoundURL.get();
+-  ringtonePlayer.loop = true;
+-
+-  var activateVibration = null;
+-  SettingsListener.observe('vibration.enabled', true, function(value) {
+-    activateVibration = !!value;
+-  });
+-
+   var screenLock;
+ 
+   /* === Setup === */
+@@ -247,34 +215,11 @@ var CallsHandler = (function callsHandler() {
+   }
+ 
+   function handleFirstIncoming(call) {
+-    var vibrateInterval = 0;
+-    if (activateVibration != false) {
+-      vibrateInterval = window.setInterval(function vibrate() {
+-        // Wait for the setting value to return before starting a vibration.
+-        if ('vibrate' in navigator && activateVibration) {
+-          navigator.vibrate([200]);
+-        }
+-      }, 600);
+-    }
+-
+-    if (activePhoneSound == true) {
+-      ringtonePlayer.play();
+-      ringing = true;
+-    } else if (activePhoneSound == null) {
+-      // Let's wait for the setting to return before playing any sound.
+-      ringing = true;
+-    }
+-
+     screenLock = navigator.requestWakeLock('screen');
+ 
+     call.addEventListener('statechange', function callStateChange() {
+       call.removeEventListener('statechange', callStateChange);
+ 
+-      ringtonePlayer.pause();
+-      ringing = false;
+-
+-      window.clearInterval(vibrateInterval);
+-
+       if (screenLock) {
+         screenLock.unlock();
+         screenLock = null;
+diff --git a/apps/communications/manifest.webapp b/apps/communications/manifest.webapp
+index 3b075b1..dd805cb 100644
+--- a/apps/communications/manifest.webapp
++++ b/apps/communications/manifest.webapp
+@@ -82,7 +82,6 @@
+     "wifi-manage":{},
+     "time": {},
+     "audio-channel-telephony":{},
+-    "audio-channel-ringer":{},
+     "idle":{},
+     "storage": {},
+     "device-storage:sdcard": { "access": "readcreate" },
+diff --git a/apps/system/index.html b/apps/system/index.html
+index 64c61b4..9c1da8f 100644
+--- a/apps/system/index.html
++++ b/apps/system/index.html
+@@ -81,6 +81,7 @@
+     <script defer src="js/source_view.js"></script>
+     <script defer src="js/storage.js"></script>
+     <script defer src="js/hardware_buttons.js"></script>
++    <script defer src="js/dialer_ringer.js"></script>
+     <script defer src="js/system_banner.js"></script>
+     <script defer src="js/system_dialog.js"></script>
+     <script defer src="js/home_gesture.js"></script>
+diff --git a/apps/system/js/bootstrap.js b/apps/system/js/bootstrap.js
+index dc67750..8f1dbb2 100644
+--- a/apps/system/js/bootstrap.js
++++ b/apps/system/js/bootstrap.js
+@@ -4,6 +4,7 @@
+ 'use strict';
+ 
+ window.addEventListener('load', function startup() {
++  window.dialerRinger = new DialerRinger().start();
+   function safelyLaunchFTU() {
+     window.addEventListener('homescreen-ready', function onHomescreenReady() {
+       window.removeEventListener('homescreen-ready', onHomescreenReady);
+diff --git a/apps/system/manifest.webapp b/apps/system/manifest.webapp
+index 0190ed2..08a440f 100644
+--- a/apps/system/manifest.webapp
++++ b/apps/system/manifest.webapp
+@@ -38,6 +38,7 @@
+     "permissions":{},
+     "audio-channel-notification":{},
+     "audio-channel-content":{},
++    "audio-channel-ringer":{},
+     "cellbroadcast":{},
+     "input":{},
+     "input-manage":{},
+-- 
+1.7.9.5
+
