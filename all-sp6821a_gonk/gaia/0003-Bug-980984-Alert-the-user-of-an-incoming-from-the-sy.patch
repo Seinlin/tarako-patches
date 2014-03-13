@@ -1,16 +1,20 @@
-From 63db5f03902cf408f37d923624d29fae9c9ac1f6 Mon Sep 17 00:00:00 2001
+From fe06ccde32adf1f2d32402bf21bf7b8238aeba5b Mon Sep 17 00:00:00 2001
 From: dannyliang <dliang@mozilla.com>
-Date: Wed, 12 Mar 2014 16:12:50 +0800
+Date: Thu, 13 Mar 2014 10:38:11 +0800
 Subject: [PATCH] Bug 980984 - Alert the user of an incoming from the system
  app
 
 ---
- apps/communications/dialer/js/calls_handler.js |   55 ------------------------
+ apps/communications/dialer/js/calls_handler.js |   55 ----
  apps/communications/manifest.webapp            |    1 -
  apps/system/index.html                         |    1 +
  apps/system/js/bootstrap.js                    |    1 +
+ apps/system/js/dialer_ringer.js                |  156 ++++++++++++
  apps/system/manifest.webapp                    |    1 +
- 5 files changed, 3 insertions(+), 56 deletions(-)
+ apps/system/test/unit/dialer_ringer_test.js    |  320 ++++++++++++++++++++++++
+ 7 files changed, 479 insertions(+), 56 deletions(-)
+ create mode 100644 apps/system/js/dialer_ringer.js
+ create mode 100644 apps/system/test/unit/dialer_ringer_test.js
 
 diff --git a/apps/communications/dialer/js/calls_handler.js b/apps/communications/dialer/js/calls_handler.js
 index 1ae2b21..1693c3d 100755
@@ -135,6 +139,168 @@ index dc67750..8f1dbb2 100644
    function safelyLaunchFTU() {
      window.addEventListener('homescreen-ready', function onHomescreenReady() {
        window.removeEventListener('homescreen-ready', onHomescreenReady);
+diff --git a/apps/system/js/dialer_ringer.js b/apps/system/js/dialer_ringer.js
+new file mode 100644
+index 0000000..e9d7663
+--- /dev/null
++++ b/apps/system/js/dialer_ringer.js
+@@ -0,0 +1,156 @@
++'use strict';
++
++/* global SettingsListener, SettingsURL */
++
++(function(exports) {
++  /**
++   *
++   * The delay between an incoming phone call and the first ring or vibration
++   * needs to be as short as possible.
++   *
++   * On very low-end devices, waiting for the dialer app to start, to load an
++   * attention screen and then to load the ringtone from the settings database
++   * makes the delay unacceptable.
++   *
++   * This simple module keeps the ringtone (blob) around and starts alerting the
++   * user as soon as a new incoming call is detected via the mozTelephony API.
++   *
++   * We also listen for the sleep and volumedown hardware buttons to provide
++   * the user with an easy way to stop the ringing.
++   *
++   * @example
++   * var dialerRinger = new DialerRinger();
++   * dialerRinger.start(); // Attach the event listeners.
++   * dialerRinger.stop();  // Deattach the event listeners.
++   *
++   * @class    DialerRinger
++   *
++   **/
++  var DialerRinger = function DialerRinger() {
++    var telephony = navigator.mozTelephony;
++    if (!telephony) {
++      return;
++    }
++
++    this._telephony = telephony;
++
++    this._started = false;
++    this._shouldRing = null;
++    this._shouldVibrate = true;
++    this._alerting = false;
++    this._vibrateInterval = null;
++
++    this._player = new Audio();
++    // XXX: This will need to be updated for bug 961967
++    // (audio competing in system app)
++    this._player.mozAudioChannelType = 'ringer';
++    this._player.preload = 'metadata';
++    this._player.loop = true;
++  };
++
++  DialerRinger.prototype.start = function dr_start() {
++    if (!this._telephony) {
++      return;
++    }
++
++    if (this._started) {
++      throw 'Instance should not be start()\'ed twice.';
++    }
++    this._started = true;
++
++    SettingsListener.observe('audio.volume.notification', 7, function(value) {
++      this._shouldRing = !!value;
++      if (this._shouldRing && this._alerting) {
++        this._player.play();
++      }
++    }.bind(this));
++
++    SettingsListener.observe('dialer.ringtone', '', function(value) {
++      var phoneSoundURL = new SettingsURL();
++
++      this._player.pause();
++      this._player.src = phoneSoundURL.set(value);
++
++      if (this._shouldRing && this._alerting) {
++        this._player.play();
++      }
++    }.bind(this));
++
++    SettingsListener.observe('vibration.enabled', true, function(value) {
++      this._shouldVibrate = !!value;
++    }.bind(this));
++
++    this._telephony.addEventListener('callschanged', this);
++
++    window.addEventListener('sleep', this);
++    window.addEventListener('volumedown', this);
++
++    return this;
++  };
++
++  DialerRinger.prototype.stop = function dr_stop() {
++    if (!this._started) {
++      return;
++    }
++    this._started = false;
++
++    this._telephony.removeEventListener('callschanged', this);
++
++    window.removeEventListener('sleep', this);
++    window.removeEventListener('volumedown', this);
++
++    // TODO: should remove the settings listener once the helper
++    // allows it.
++    // See bug 981373.
++  };
++
++  DialerRinger.prototype.handleEvent = function dr_handleEvent(evt) {
++    if (evt.type === 'sleep' || evt.type === 'volumedown') {
++      this._stopAlerting();
++      return;
++    }
++
++    if (this._alerting || evt.type !== 'callschanged') {
++      return;
++    }
++
++    var calls = this._telephony.calls;
++    if (calls.length !== 1 || calls[0].state !== 'incoming') {
++      return;
++    }
++
++    var incomingCall = calls[0];
++    var self = this;
++
++    self._startAlerting();
++    incomingCall.addEventListener('statechange', function callStateChange() {
++      incomingCall.removeEventListener('statechange', callStateChange);
++
++      self._stopAlerting();
++    });
++  };
++
++  DialerRinger.prototype._startAlerting = function dr_startAlerting() {
++    this._alerting = true;
++
++    if ('vibrate' in navigator && this._shouldVibrate) {
++      this._vibrateInterval = window.setInterval(function vibrate() {
++        navigator.vibrate([200]);
++      }, 600);
++      navigator.vibrate([200]);
++    }
++
++    if (this._shouldRing) {
++      this._player.play();
++    }
++  };
++
++  DialerRinger.prototype._stopAlerting = function dr_stopAlerting() {
++    this._alerting = false;
++    this._player.pause();
++    this._player.currentTime = 0;
++    window.clearInterval(this._vibrateInterval);
++  };
++
++  exports.DialerRinger = DialerRinger;
++}(window));
 diff --git a/apps/system/manifest.webapp b/apps/system/manifest.webapp
 index 0190ed2..08a440f 100644
 --- a/apps/system/manifest.webapp
@@ -147,6 +313,332 @@ index 0190ed2..08a440f 100644
      "cellbroadcast":{},
      "input":{},
      "input-manage":{},
+diff --git a/apps/system/test/unit/dialer_ringer_test.js b/apps/system/test/unit/dialer_ringer_test.js
+new file mode 100644
+index 0000000..8417a7d
+--- /dev/null
++++ b/apps/system/test/unit/dialer_ringer_test.js
+@@ -0,0 +1,320 @@
++'use strict';
++
++/* global DialerRinger, MocksHelper, MockNavigatorMozTelephony,
++          MockSettingsListener, MockSettingsURL, MockAudio */
++
++require('/js/dialer_ringer.js');
++require('/shared/test/unit/mocks/mock_settings_listener.js');
++require('/shared/test/unit/mocks/mock_settings_url.js');
++require('/shared/test/unit/mocks/mock_audio.js');
++require('/test/unit/mock_navigator_moz_telephony.js');
++
++var mocksForDialerRinger = new MocksHelper([
++  'SettingsListener',
++  'Audio',
++  'SettingsURL'
++]).init();
++
++suite('system/DialerRinger', function() {
++  mocksForDialerRinger.attachTestHelpers();
++  var realTelephony, realVibrate;
++
++  var subject;
++
++  suiteSetup(function() {
++    realTelephony = navigator.mozTelephony;
++    navigator.mozTelephony = MockNavigatorMozTelephony;
++
++    realVibrate = navigator.vibrate;
++  });
++
++  suiteTeardown(function() {
++    navigator.mozTelephony = realTelephony;
++    navigator.vibrate = realVibrate;
++  });
++
++  setup(function() {
++    this.sinon.useFakeTimers();
++
++    subject = new DialerRinger().start();
++  });
++
++  teardown(function() {
++    subject.stop();
++    MockNavigatorMozTelephony.mTeardown();
++  });
++
++  function MockCall(state) {
++    this.state = state;
++    this.addEventListener = function() {};
++    this.removeEventListener = function() {};
++  }
++
++  suite('Audio element setup', function() {
++    var mockAudio;
++
++    setup(function() {
++      mockAudio = MockAudio.instances[0];
++    });
++
++    test('it should set the channel', function() {
++      assert.equal(mockAudio.mozAudioChannelType, 'ringer');
++    });
++
++    test('it should preload metadata', function() {
++      assert.equal(mockAudio.preload, 'metadata');
++    });
++
++    test('it should loop', function() {
++      assert.isTrue(mockAudio.loop);
++    });
++
++    test('it should load the ringtone from the settings', function() {
++      assert.isUndefined(mockAudio.src);
++
++      var blob = new Blob([], {type: 'audio/ogg'});
++      var src = '----uniq----';
++      this.sinon.stub(MockSettingsURL.prototype, 'set').withArgs(blob).returns(
++        src
++      );
++      MockSettingsListener.mTriggerCallback('dialer.ringtone', blob);
++
++      assert.equal(mockAudio.src, src);
++    });
++  });
++
++  suite('When an incoming call comes in', function() {
++    var vibrateSpy;
++    var mockCall;
++    var mockAudio;
++
++    setup(function() {
++      vibrateSpy = this.sinon.spy();
++      navigator.vibrate = vibrateSpy;
++
++      mockAudio = MockAudio.instances[0];
++      this.sinon.spy(mockAudio, 'play');
++      this.sinon.spy(mockAudio, 'pause');
++
++      mockCall = new MockCall('incoming');
++      this.sinon.spy(mockCall, 'addEventListener');
++      this.sinon.spy(mockCall, 'removeEventListener');
++      MockNavigatorMozTelephony.calls = [mockCall];
++    });
++
++    suite('if the vibration is enabled', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('vibration.enabled', true);
++        var evt = new CustomEvent('callschanged');
++        MockNavigatorMozTelephony.mTriggerEvent(evt);
++      });
++
++      test('it should start vibrating', function() {
++        assert.isTrue(vibrateSpy.calledWith([200]));
++      });
++
++      test('it should vibrate every 600ms', function() {
++        this.sinon.clock.tick(600);
++        assert.isTrue(vibrateSpy.calledTwice);
++        this.sinon.clock.tick(600);
++        assert.isTrue(vibrateSpy.calledThrice);
++      });
++
++      test('it should stop when the call state changes', function() {
++        mockCall.addEventListener.yield();
++        vibrateSpy.reset();
++        this.sinon.clock.tick(600);
++        assert.isTrue(vibrateSpy.notCalled);
++      });
++
++      test('it should stop when the user presses volume down', function() {
++        window.dispatchEvent(new CustomEvent('volumedown'));
++        vibrateSpy.reset();
++        this.sinon.clock.tick(600);
++        assert.isTrue(vibrateSpy.notCalled);
++      });
++    });
++
++    suite('if the vibration is disabled', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('vibration.enabled', false);
++        var evt = new CustomEvent('callschanged');
++        MockNavigatorMozTelephony.mTriggerEvent(evt);
++      });
++
++      test('it should not vibrate', function() {
++        assert.isTrue(vibrateSpy.notCalled);
++      });
++    });
++
++    suite('if the ringtone has a volume', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('audio.volume.notification', 7);
++        var evt = new CustomEvent('callschanged');
++        MockNavigatorMozTelephony.mTriggerEvent(evt);
++      });
++
++      test('it should play the ringtone', function() {
++        assert.isTrue(mockAudio.play.calledOnce);
++      });
++
++      test('it should pause when the call state changes', function() {
++        mockCall.addEventListener.yield();
++        assert.isTrue(mockAudio.pause.calledOnce);
++      });
++
++      test('it should pause when the user presses the sleep button',
++      function() {
++        window.dispatchEvent(new CustomEvent('sleep'));
++        assert.isTrue(mockAudio.pause.calledOnce);
++      });
++    });
++
++    suite('if the ringtone is muted', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('audio.volume.notification', 0);
++        var evt = new CustomEvent('callschanged');
++        MockNavigatorMozTelephony.mTriggerEvent(evt);
++      });
++
++      test('it should not play the ringtone', function() {
++        assert.isTrue(mockAudio.play.notCalled);
++      });
++    });
++
++    test('it should listen to the state changes of the call', function() {
++      MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
++      assert.isTrue(mockCall.addEventListener.calledWith('statechange'));
++    });
++
++    test('it should not listen twice if we get multiple callschanged',
++    function() {
++      MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
++      MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
++      assert.isTrue(mockCall.addEventListener.calledOnce);
++    });
++
++    test('it should remove the statechange listener after the first trigger',
++    function() {
++      MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
++      mockCall.addEventListener.yield();
++      assert.isTrue(mockCall.removeEventListener.calledWith('statechange'));
++    });
++  });
++
++  suite('When a second incoming call comes in', function() {
++    var vibrateSpy;
++    var secondCall;
++    var mockAudio;
++
++    setup(function() {
++      var mockCall = new MockCall('incoming');
++      this.sinon.spy(mockCall, 'addEventListener');
++      MockNavigatorMozTelephony.calls = [mockCall];
++      MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
++      mockCall.addEventListener.yield();
++
++      secondCall = new MockCall('incoming');
++      this.sinon.spy(secondCall, 'addEventListener');
++      MockNavigatorMozTelephony.calls = [mockCall, secondCall];
++
++      vibrateSpy = this.sinon.spy();
++      navigator.vibrate = vibrateSpy;
++
++      mockAudio = MockAudio.instances[0];
++      this.sinon.spy(mockAudio, 'play');
++
++      MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
++    });
++
++    suite('even if the vibration is enabled', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('vibration.enabled', true);
++      });
++
++      test('it should not vibrate', function() {
++        assert.isTrue(vibrateSpy.notCalled);
++      });
++    });
++
++    suite('even if the ringtone has a volume', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('audio.volume.notification', 7);
++      });
++
++      test('it should not play', function() {
++        assert.isTrue(mockAudio.play.notCalled);
++      });
++    });
++
++    test('it should not listen to the state changes of the call', function() {
++      assert.isTrue(secondCall.addEventListener.notCalled);
++    });
++  });
++
++  suite('When a outgoing call goes out', function() {
++    var vibrateSpy;
++    var mockCall;
++    var mockAudio;
++
++    setup(function() {
++      vibrateSpy = this.sinon.spy();
++      navigator.vibrate = vibrateSpy;
++
++      mockAudio = MockAudio.instances[0];
++      this.sinon.spy(mockAudio, 'play');
++
++      mockCall = new MockCall('outgoing');
++      this.sinon.spy(mockCall, 'addEventListener');
++      MockNavigatorMozTelephony.calls = [mockCall];
++      MockNavigatorMozTelephony.mTriggerEvent(new CustomEvent('callschanged'));
++    });
++
++    suite('even if the vibration is enabled', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('vibration.enabled', true);
++      });
++
++      test('it should not vibrate', function() {
++        assert.isTrue(vibrateSpy.notCalled);
++      });
++    });
++
++    suite('even if the ringtone has a volume', function() {
++      setup(function() {
++        MockSettingsListener.mTriggerCallback('audio.volume.notification', 7);
++      });
++
++      test('it should not play', function() {
++        assert.isTrue(mockAudio.play.notCalled);
++      });
++    });
++
++    test('it should not listen to the state changes of the call', function() {
++      assert.isTrue(mockCall.addEventListener.notCalled);
++    });
++  });
++
++  test('should throw if started twice', function(done) {
++    try {
++      subject.start();
++    } catch (e) {
++      assert.ok(e);
++      done();
++    }
++  });
++
++  test('should not do anything if mozTelephony is unavailable', function() {
++    MockSettingsListener.mCallbacks = {};
++    MockAudio.mTeardown();
++    navigator.mozTelephony = undefined;
++
++    subject = new DialerRinger();
++    subject.start();
++
++    assert.equal(MockAudio.instances.length, 0);
++    assert.deepEqual(MockSettingsListener.mCallbacks, {});
++
++    navigator.mozTelephony = MockNavigatorMozTelephony;
++  });
++});
 -- 
 1.7.9.5
 
