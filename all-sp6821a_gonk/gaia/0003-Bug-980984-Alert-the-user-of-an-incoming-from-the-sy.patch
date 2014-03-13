@@ -1,6 +1,6 @@
-From fe06ccde32adf1f2d32402bf21bf7b8238aeba5b Mon Sep 17 00:00:00 2001
+From cc2cb4500ee39c0479d8aada2832aef6a4bf19b8 Mon Sep 17 00:00:00 2001
 From: dannyliang <dliang@mozilla.com>
-Date: Thu, 13 Mar 2014 10:38:11 +0800
+Date: Thu, 13 Mar 2014 11:56:09 +0800
 Subject: [PATCH] Bug 980984 - Alert the user of an incoming from the system
  app
 
@@ -17,7 +17,7 @@ Subject: [PATCH] Bug 980984 - Alert the user of an incoming from the system
  create mode 100644 apps/system/test/unit/dialer_ringer_test.js
 
 diff --git a/apps/communications/dialer/js/calls_handler.js b/apps/communications/dialer/js/calls_handler.js
-index 1ae2b21..1693c3d 100755
+index dcc6404..4c570fb 100755
 --- a/apps/communications/dialer/js/calls_handler.js
 +++ b/apps/communications/dialer/js/calls_handler.js
 @@ -13,30 +13,8 @@ var CallsHandler = (function callsHandler() {
@@ -68,18 +68,19 @@ index 1ae2b21..1693c3d 100755
    var screenLock;
  
    /* === Setup === */
-@@ -247,34 +215,11 @@ var CallsHandler = (function callsHandler() {
+@@ -247,35 +215,12 @@ var CallsHandler = (function callsHandler() {
    }
  
    function handleFirstIncoming(call) {
 -    var vibrateInterval = 0;
--    if (activateVibration != false) {
+-    if ('vibrate' in navigator && activateVibration != false) {
 -      vibrateInterval = window.setInterval(function vibrate() {
 -        // Wait for the setting value to return before starting a vibration.
--        if ('vibrate' in navigator && activateVibration) {
+-        if (activateVibration) {
 -          navigator.vibrate([200]);
 -        }
 -      }, 600);
+-      navigator.vibrate([200]);
 -    }
 -
 -    if (activePhoneSound == true) {
@@ -89,7 +90,7 @@ index 1ae2b21..1693c3d 100755
 -      // Let's wait for the setting to return before playing any sound.
 -      ringing = true;
 -    }
--
+ 
      screenLock = navigator.requestWakeLock('screen');
  
      call.addEventListener('statechange', function callStateChange() {
