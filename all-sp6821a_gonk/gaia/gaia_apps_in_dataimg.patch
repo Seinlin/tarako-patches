@@ -1,35 +1,54 @@
+From 003f98cc7fe3103c4919319b2a51d893d3b6bfd1 Mon Sep 17 00:00:00 2001
+From: Kai-Zhen Li <kli@mozilla.com>
+Date: Mon, 7 Apr 2014 16:20:06 +0800
+Subject: [PATCH] Install webapp to /data/local when NOOPT=1.
+
+---
+ Android.mk |    4 ++++
+ Makefile   |    4 ++++
+ 2 files changed, 8 insertions(+)
+
 diff --git a/Android.mk b/Android.mk
-index 81f29d9..e0cd1b8 100644
+index 81f29d9..034d9e8 100644
 --- a/Android.mk
 +++ b/Android.mk
-@@ -25,7 +25,7 @@ CLEAN_PROFILE := 0
+@@ -25,8 +25,10 @@ CLEAN_PROFILE := 0
  # In user (production) builds we put gaia apps in /system/b2g/webapps
  ifneq ($(filter user userdebug, $(TARGET_BUILD_VARIANT)),)
  GAIA_MAKE_FLAGS += PRODUCTION=1
--B2G_SYSTEM_APPS := 1
-+#B2G_SYSTEM_APPS := 1
++ifeq ($(B2G_NOOPT),)
+ B2G_SYSTEM_APPS := 1
  endif
++endif
  
  # Gaia currently needs to specify the default scale value manually or pictures
-@@ -35,7 +35,7 @@ GAIA_MAKE_FLAGS += GAIA_DEV_PIXELS_PER_PX=$(GAIA_DEV_PIXELS_PER_PX)
+ # with correct resolution will not be applied.
+@@ -35,7 +37,9 @@ GAIA_MAKE_FLAGS += GAIA_DEV_PIXELS_PER_PX=$(GAIA_DEV_PIXELS_PER_PX)
  endif
  
  ifeq ($(B2G_SYSTEM_APPS),1)
--GAIA_MAKE_FLAGS += B2G_SYSTEM_APPS=1
-+#GAIA_MAKE_FLAGS += B2G_SYSTEM_APPS=1
++ifeq ($(B2G_NOOPT),)
+ GAIA_MAKE_FLAGS += B2G_SYSTEM_APPS=1
++endif
  GAIA_APP_INSTALL_PARENT := $(TARGET_OUT)/b2g
  CLEAN_PROFILE := 1
  endif
 diff --git a/Makefile b/Makefile
-index 80ab2b4..1383143 100644
+index 80ab2b4..a5a61ff 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -141,7 +141,7 @@ export npm_config_loglevel=warn
+@@ -141,7 +141,11 @@ export npm_config_loglevel=warn
  MARIONETTE_RUNNER_HOST?=marionette-b2gdesktop-host
  TEST_MANIFEST?=./shared/test/integration/local-manifest.json
  
--GAIA_INSTALL_PARENT?=/system/b2g
++ifeq ($(B2G_NOOPT),)
+ GAIA_INSTALL_PARENT?=/system/b2g
++else
 +GAIA_INSTALL_PARENT?=/data/local
++endif
  
  ifeq ($(MAKECMDGOALS), demo)
  GAIA_DOMAIN=thisdomaindoesnotexist.org
+-- 
+1.7.9.5
+
