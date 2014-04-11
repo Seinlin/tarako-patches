@@ -1,0 +1,25 @@
+diff --git a/arch/arm/configs/sp6821a-vlx_defconfig b/arch/arm/configs/sp6821a-vlx_defconfig
+index 1e0b5a4..e6be0fe 100644
+--- a/arch/arm/configs/sp6821a-vlx_defconfig
++++ b/arch/arm/configs/sp6821a-vlx_defconfig
+@@ -37,6 +37,7 @@ CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
+ CONFIG_HAVE_IRQ_WORK=y
+ CONFIG_IRQ_WORK=y
+ 
++CONFIG_DEBUG_KMEMLEAK=y
+ #
+ # General setup
+ #
+diff --git a/mm/oom_kill.c b/mm/oom_kill.c
+index 8093fc7..2156d0b 100644
+--- a/mm/oom_kill.c
++++ b/mm/oom_kill.c
+@@ -697,7 +697,7 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask,
+ 	int killed = 0;
+ 
+ 	blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
+-	if (freed > 0)
++	if (1) //(freed > 0) do nothing and back for debugging
+ 		/* Got some memory back in the last second. */
+ 		return;
+ 
