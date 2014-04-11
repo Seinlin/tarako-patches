@@ -1,15 +1,3 @@
-diff --git a/arch/arm/configs/sp6821a-vlx_defconfig b/arch/arm/configs/sp6821a-vlx_defconfig
-index 1e0b5a4..e6be0fe 100644
---- a/arch/arm/configs/sp6821a-vlx_defconfig
-+++ b/arch/arm/configs/sp6821a-vlx_defconfig
-@@ -37,6 +37,7 @@ CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
- CONFIG_HAVE_IRQ_WORK=y
- CONFIG_IRQ_WORK=y
- 
-+CONFIG_DEBUG_KMEMLEAK=y
- #
- # General setup
- #
 diff --git a/mm/oom_kill.c b/mm/oom_kill.c
 index 8093fc7..2156d0b 100644
 --- a/mm/oom_kill.c
