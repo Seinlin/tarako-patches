@@ -1,116 +1,97 @@
 diff --git a/gfx/2d/2D.h b/gfx/2d/2D.h
-index b946f8a..792643e 100644
+index b946f8a..6cddf31 100644
 --- a/gfx/2d/2D.h
 +++ b/gfx/2d/2D.h
-@@ -977,6 +977,11 @@ public:
+@@ -975,7 +975,7 @@ public:
+    */
+   static bool CheckSurfaceSize(const IntSize &sz, int32_t limit = 0);
  
-   static TemporaryRef<DrawTarget> CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize);
+-  static TemporaryRef<DrawTarget> CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize);
++  static TemporaryRef<DrawTarget> CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat* aFormat = nullptr);
  
-+  static TemporaryRef<DrawTarget>
-+    CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface,
-+                                    const IntSize& aSize,
-+                                    SurfaceFormat aFormat);
-+
    static TemporaryRef<SourceSurface>
      CreateSourceSurfaceForCairoSurface(cairo_surface_t* aSurface,
-                                        SurfaceFormat aFormat);
 diff --git a/gfx/2d/DrawTargetCairo.cpp b/gfx/2d/DrawTargetCairo.cpp
-index fe98e2c..2dfd756 100644
+index fe98e2c..41f20cd 100644
 --- a/gfx/2d/DrawTargetCairo.cpp
 +++ b/gfx/2d/DrawTargetCairo.cpp
-@@ -1157,6 +1157,24 @@ DrawTargetCairo::InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize&
-   return true;
- }
- 
-+bool
-+DrawTargetCairo::InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat aFormat)
-+{
-+  mContext = cairo_create(aSurface);
-+  mSurface = aSurface;
-+  mSize = aSize;
-+  mFormat = aFormat;
-+
-+  if (mFormat == FORMAT_B8G8R8A8 ||
-+      mFormat == FORMAT_R8G8B8A8) {
-+    SetPermitSubpixelAA(false);
-+  } else {
-+    SetPermitSubpixelAA(true);
-+  }
-+
-+  return true;
-+}
-+
- TemporaryRef<DrawTarget>
- DrawTargetCairo::CreateShadowDrawTarget(const IntSize &aSize, SurfaceFormat aFormat,
-                                         float aSigma) const
-@@ -1208,6 +1226,13 @@ DrawTargetCairo::Init(cairo_surface_t* aSurface, const IntSize& aSize)
+@@ -1140,12 +1140,15 @@ DrawTargetCairo::CreateSimilarDrawTarget(const IntSize &aSize, SurfaceFormat aFo
  }
  
  bool
-+DrawTargetCairo::Init(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat aFormat)
-+{
-+  cairo_surface_reference(aSurface);
-+  return InitAlreadyReferenced(aSurface, aSize, aFormat);
-+}
-+
-+bool
- DrawTargetCairo::Init(const IntSize& aSize, SurfaceFormat aFormat)
+-DrawTargetCairo::InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize& aSize)
++DrawTargetCairo::InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat* aFormat)
  {
-   cairo_surface_t *surf = cairo_image_surface_create(GfxFormatToCairoFormat(aFormat), aSize.width, aSize.height);
+   mContext = cairo_create(aSurface);
+   mSurface = aSurface;
+   mSize = aSize;
+-  mFormat = CairoContentToGfxFormat(cairo_surface_get_content(aSurface));
++  if (aFormat)
++    mFormat = *aFormat;
++  else
++    mFormat = CairoContentToGfxFormat(cairo_surface_get_content(aSurface));
+ 
+   if (mFormat == FORMAT_B8G8R8A8 ||
+       mFormat == FORMAT_R8G8B8A8) {
+@@ -1201,10 +1204,10 @@ DrawTargetCairo::CreateShadowDrawTarget(const IntSize &aSize, SurfaceFormat aFor
+ }
+ 
+ bool
+-DrawTargetCairo::Init(cairo_surface_t* aSurface, const IntSize& aSize)
++DrawTargetCairo::Init(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat* aFormat)
+ {
+   cairo_surface_reference(aSurface);
+-  return InitAlreadyReferenced(aSurface, aSize);
++  return InitAlreadyReferenced(aSurface, aSize, aFormat);
+ }
+ 
+ bool
 diff --git a/gfx/2d/DrawTargetCairo.h b/gfx/2d/DrawTargetCairo.h
-index ac14bc9..85758aa 100644
+index ac14bc9..cb39765 100644
 --- a/gfx/2d/DrawTargetCairo.h
 +++ b/gfx/2d/DrawTargetCairo.h
-@@ -155,6 +155,7 @@ public:
+@@ -154,7 +154,7 @@ public:
+ 
    virtual void *GetNativeSurface(NativeSurfaceType aType);
  
-   bool Init(cairo_surface_t* aSurface, const IntSize& aSize);
-+  bool Init(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat aFormat);
+-  bool Init(cairo_surface_t* aSurface, const IntSize& aSize);
++  bool Init(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat* aFormat = nullptr);
    bool Init(const IntSize& aSize, SurfaceFormat aFormat);
    bool Init(unsigned char* aData, const IntSize &aSize, int32_t aStride, SurfaceFormat aFormat);
  
-@@ -174,7 +175,7 @@ public:
+@@ -173,8 +173,7 @@ public:
+ 
  private: // methods
    // Init cairo surface without doing a cairo_surface_reference() call.
-   bool InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize& aSize);
+-  bool InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize& aSize);
 -
-+  bool InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat aFormat);
++  bool InitAlreadyReferenced(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat* aFormat = nullptr);
    enum DrawPatternType { DRAW_FILL, DRAW_STROKE };
    void DrawPattern(const Pattern& aPattern,
                     const StrokeOptions& aStrokeOptions,
 diff --git a/gfx/2d/Factory.cpp b/gfx/2d/Factory.cpp
-index d17fdb9..123b236 100644
+index d17fdb9..6387e2f 100644
 --- a/gfx/2d/Factory.cpp
 +++ b/gfx/2d/Factory.cpp
-@@ -644,6 +644,26 @@ Factory::CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSiz
-   return retVal;
- }
+@@ -625,14 +625,14 @@ Factory::CreateCairoGlyphRenderingOptions(FontHinting aHinting, bool aAutoHintin
+ #endif
  
-+TemporaryRef<DrawTarget>
-+Factory::CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat aFormat)
-+{
-+  RefPtr<DrawTarget> retVal;
-+
-+#ifdef USE_CAIRO
-+  RefPtr<DrawTargetCairo> newTarget = new DrawTargetCairo();
-+
+ TemporaryRef<DrawTarget>
+-Factory::CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize)
++Factory::CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize, SurfaceFormat* aFormat)
+ {
+   RefPtr<DrawTarget> retVal;
+ 
+ #ifdef USE_CAIRO
+   RefPtr<DrawTargetCairo> newTarget = new DrawTargetCairo();
+ 
+-  if (newTarget->Init(aSurface, aSize)) {
 +  if (newTarget->Init(aSurface, aSize, aFormat)) {
-+    retVal = newTarget;
-+  }
-+
-+  if (mRecorder && retVal) {
-+    RefPtr<DrawTarget> recordDT = new DrawTargetRecording(mRecorder, retVal, true);
-+    return recordDT;
-+  }
-+#endif
-+  return retVal;
-+}
-+
- TemporaryRef<SourceSurface>
- Factory::CreateSourceSurfaceForCairoSurface(cairo_surface_t* aSurface,
-                                             SurfaceFormat aFormat)
+     retVal = newTarget;
+   }
+ 
 diff --git a/gfx/thebes/gfxPlatform.cpp b/gfx/thebes/gfxPlatform.cpp
-index edcbc5b..94c43f3 100644
+index edcbc5b..1acead0 100644
 --- a/gfx/thebes/gfxPlatform.cpp
 +++ b/gfx/thebes/gfxPlatform.cpp
 @@ -649,7 +649,8 @@ cairo_user_data_key_t kDrawTarget;
@@ -119,7 +100,7 @@ index edcbc5b..94c43f3 100644
  {
 -  RefPtr<DrawTarget> drawTarget = Factory::CreateDrawTargetForCairoSurface(aSurface->CairoSurface(), aSize);
 +  SurfaceFormat format = Optimal2DFormatForContent(aSurface->GetContentType());
-+  RefPtr<DrawTarget> drawTarget = Factory::CreateDrawTargetForCairoSurface(aSurface->CairoSurface(), aSize, format);
++  RefPtr<DrawTarget> drawTarget = Factory::CreateDrawTargetForCairoSurface(aSurface->CairoSurface(), aSize, &format);
    aSurface->SetData(&kDrawTarget, drawTarget, nullptr);
    return drawTarget;
  }
