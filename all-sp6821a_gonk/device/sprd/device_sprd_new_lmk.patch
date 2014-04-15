@@ -20,7 +20,7 @@ index 99cca26..4a2be27 100644
 +
 +pref("hal.processPriorityManager.gonk.BACKGROUND_PERCEIVABLE.KillUnderKB", 6144);
 +
-+pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.KillUnderKB", 10240);
++//pref("hal.processPriorityManager.gonk.BACKGROUND_HOMESCREEN.KillUnderKB", 10240);
 +
 +pref("hal.processPriorityManager.gonk.BACKGROUND.KillUnderKB", 20480);
 +
