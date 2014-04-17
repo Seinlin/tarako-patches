@@ -1,0 +1,13 @@
+diff --git a/sp6821a_gonk/init.sp8810.rc b/sp6821a_gonk/init.sp8810.rc
+index 1a9ee9d..80873f5 100644
+--- a/sp6821a_gonk/init.sp8810.rc
++++ b/sp6821a_gonk/init.sp8810.rc
+@@ -68,7 +68,7 @@ on property:ro.debuggable=1
+ 
+ on property:zram.support=true
+     setprop zram.disksize 64
+-    setprop sys.vm.swappiness 100
++    setprop sys.vm.swappiness 60
+     start zram
+ 
+ service zram /system/xbin/zram.sh
