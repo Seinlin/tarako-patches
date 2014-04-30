@@ -1,0 +1,63 @@
+From c3553204a2a9be6e0d45c9997aed43ed40487ed7 Mon Sep 17 00:00:00 2001
+From: ian-liu <iliu@mozilla.com>
+Date: Mon, 28 Apr 2014 18:33:39 +0800
+Subject: [PATCH] Bug 1002406 - [Tarako][Bluetooth] Pairing dialog(attention
+ screen) cannot be close after run on monkey test
+
+---
+ apps/bluetooth/js/pair_view.js | 25 +++++++++++++++++++------
+ 1 file changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/apps/bluetooth/js/pair_view.js b/apps/bluetooth/js/pair_view.js
+index 5198392..66607d1 100644
+--- a/apps/bluetooth/js/pair_view.js
++++ b/apps/bluetooth/js/pair_view.js
+@@ -94,7 +94,11 @@ var Pairview = {
+   },
+ 
+   close: function() {
+-    window.opener.PairManager.setConfirmation(this._device.address, false);
++    if (window.opener && window.opener.PairManager &&
++        window.opener.PairManager.setConfirmation) {
++      window.opener.PairManager.setConfirmation(this._device.address, false);
++    }
++
+     window.close();
+   },
+ 
+@@ -122,18 +126,27 @@ var Pairview = {
+             this.closeButton.disabled = true;
+             switch (this._pairMethod) {
+               case 'confirmation':
+-                window.opener.PairManager.setConfirmation(this._device.address,
+-                                                          true);
++                if (window.opener && window.opener.PairManager &&
++                    window.opener.PairManager.setConfirmation) {
++                  window.opener.PairManager.setConfirmation(
++                    this._device.address, true);
++                }
+                 break;
+               case 'pincode':
+                 var value = this.pinInput.value;
+-                window.opener.PairManager.setPinCode(this._device.address,
+-                                                     value);
++                if (window.opener && window.opener.PairManager &&
++                    window.opener.PairManager.setPinCode) {
++                  window.opener.PairManager.setPinCode(this._device.address,
++                                                       value);
++                }
+                 break;
+               case 'passkey':
+                 var value = this.passkeyInput.value;
+-                window.opener.PairManager.setPasskey(this._device.address,
++                if (window.opener && window.opener.PairManager &&
++                    window.opener.PairManager.setPasskey) {
++                  window.opener.PairManager.setPasskey(this._device.address,
+                                                      value);
++                }
+                 break;
+             }
+             window.close();
+-- 
+1.9.1
+
