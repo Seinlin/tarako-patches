@@ -1,0 +1,283 @@
+From a5cb1c28bdfc339a22c788f8ad1750c289e726fd Mon Sep 17 00:00:00 2001
+From: crdlc <crdlc@tid.es>
+Date: Tue, 22 Apr 2014 11:01:33 +0200
+Subject: [PATCH] Bug 991906 - [B2G][Homescreen] Long pressing an App that
+ opened in Landscape mode will cause the Dock apps to shift
+
+Conflicts:
+
+	apps/homescreen/js/dock.js
+	apps/homescreen/js/grid.js
+	apps/homescreen/test/unit/dock_test.js
+	apps/homescreen/test/unit/grid_test.js
+---
+ apps/homescreen/index.html             |    1 +
+ apps/homescreen/js/dock.js             |   17 ++++--------
+ apps/homescreen/js/grid.js             |   26 ++++++++++++------
+ apps/homescreen/js/screen_helper.js    |   47 ++++++++++++++++++++++++++++++++
+ apps/homescreen/test/unit/dock_test.js |    3 ++
+ apps/homescreen/test/unit/grid_test.js |    1 +
+ 6 files changed, 76 insertions(+), 19 deletions(-)
+ create mode 100644 apps/homescreen/js/screen_helper.js
+
+diff --git a/apps/homescreen/index.html b/apps/homescreen/index.html
+index b6f5556..9d7b685 100644
+--- a/apps/homescreen/index.html
++++ b/apps/homescreen/index.html
+@@ -35,6 +35,7 @@
+     <!-- <link rel="stylesheet" type="text/css" href="shared/style/action_menu.css"> -->
+ 
+     <!-- Specific code -->
++    <script type="text/javascript" defer src="js/screen_helper.js"></script>
+     <script type="text/javascript" defer src="js/grid_components.js"></script>
+     <script type="text/javascript" defer src="js/bookmark.js"></script>
+     <script type="text/javascript" defer src="js/state.js"></script>
+diff --git a/apps/homescreen/js/dock.js b/apps/homescreen/js/dock.js
+index 422881e..479683d 100644
+--- a/apps/homescreen/js/dock.js
++++ b/apps/homescreen/js/dock.js
+@@ -9,7 +9,6 @@ var DockManager = (function() {
+   var MAX_NUM_ICONS = notTinyLayout ? 8 : 7;
+   var maxNumAppInViewPort = notTinyLayout ? 6 : 4, maxOffsetLeft;
+ 
+-  var windowWidth = window.innerWidth;
+   var duration = 300;
+ 
+   var initialOffsetLeft, initialOffsetRight, numApps, cellWidth = 0;
+@@ -20,12 +19,6 @@ var DockManager = (function() {
+   var touchmove = isTouch ? 'touchmove' : 'mousemove';
+   var touchend = isTouch ? 'touchend' : 'mouseup';
+ 
+-  document.addEventListener('visibilitychange', function() {
+-    if (document.hidden == false) {
+-      windowWidth = window.innerWidth;
+-    }
+-  });
+-
+   var getX = (function getXWrapper() {
+     return isTouch ? function(e) { return e.touches[0].pageX } :
+                      function(e) { return e.pageX };
+@@ -63,6 +56,7 @@ var DockManager = (function() {
+ 
+         if (deltaX < 0) {
+           // Go forward
++          var windowWidth = ScreenHelper.width;
+           if (initialOffsetRight === windowWidth) {
+             return;
+           }
+@@ -138,7 +132,7 @@ var DockManager = (function() {
+ 
+   function onTouchEnd(scrollX) {
+     if (dock.getNumIcons() <= maxNumAppInViewPort ||
+-          dock.getLeft() === 0 || dock.getRight() === windowWidth) {
++          dock.getLeft() === 0 || dock.getRight() === ScreenHelper.width) {
+       // No animation
+       delete document.body.dataset.transitioning;
+       return;
+@@ -163,7 +157,7 @@ var DockManager = (function() {
+ 
+   function rePosition(numApps, callback) {
+     if (numApps > maxNumAppInViewPort && dock.getLeft() < 0 &&
+-          dock.getRight() > windowWidth) {
++          dock.getRight() > ScreenHelper.width) {
+       // The dock takes up the screen width.
+       callback && setTimeout(callback);
+       return;
+@@ -199,10 +193,10 @@ var DockManager = (function() {
+     }
+ 
+     if (cellWidth === 0) {
+-      cellWidth = windowWidth / maxNumAppInViewPort;
++      cellWidth = ScreenHelper.width / maxNumAppInViewPort;
+     }
+ 
+-    maxOffsetLeft = windowWidth - numIcons * cellWidth;
++    maxOffsetLeft = ScreenHelper.width - numIcons * cellWidth;
+   }
+ 
+   return {
+@@ -263,6 +257,7 @@ var DockManager = (function() {
+      * Update display after removing an app.
+      */
+     afterRemovingApp: function dm_afterRemovingApp() {
++      var windowWidth = ScreenHelper.width;
+       maxOffsetLeft = windowWidth - dock.getNumIcons() * cellWidth;
+       var numApps = dock.getNumIcons();
+       if (numApps > maxNumAppInViewPort && dock.getRight() >= windowWidth) {
+diff --git a/apps/homescreen/js/grid.js b/apps/homescreen/js/grid.js
+index 0bb2a7f..db476ce 100644
+--- a/apps/homescreen/js/grid.js
++++ b/apps/homescreen/js/grid.js
+@@ -12,7 +12,7 @@ var GridManager = (function() {
+ 
+   var SAVE_STATE_TIMEOUT = 100;
+   var BASE_HEIGHT = 460; // 480 - 20 (status bar height)
+-  var DEVICE_HEIGHT = window.innerHeight;
++  var DEVICE_HEIGHT = ScreenHelper.height;
+ 
+   var HIDDEN_ROLES = ['system', 'input', 'homescreen'];
+ 
+@@ -40,11 +40,18 @@ var GridManager = (function() {
+ 
+   var container;
+ 
+-  var windowWidth = window.innerWidth;
++  // This value is used in order to keep the layers onscreen when they are
++  // moved on a panel changes. This prevent the layers to be destroyed and
++  // recreated on the next move.
++  function getWindowWidthMinusOne() {
++    return ScreenHelper.width - 0.001;
++  }
++
++  var windowWidth = ScreenHelper.width;
+   document.addEventListener('visibilitychange', function() {
+     if (document.hidden == false) {
+-      windowWidth = window.innerWidth;
+-      DEVICE_HEIGHT = window.innerHeight;
++      windowWidth = ScreenHelper.width;
++      DEVICE_HEIGHT = ScreenHelper.height;
+     }
+   });
+ 
+@@ -76,8 +83,8 @@ var GridManager = (function() {
+   // Check if there is space for another row of icons
+   // For WVGA, 800x480, we also want to show 4 x 5 grid on homescreen
+   // the homescreen size would be 770 x 480, and 770/480 ~= 1.6
+-  if (DEVICE_HEIGHT - BASE_HEIGHT > BASE_HEIGHT / 5 ||
+-      DEVICE_HEIGHT / windowWidth >= 1.6) {
++  if (ScreenHelper.height - BASE_HEIGHT > BASE_HEIGHT / 5 ||
++      ScreenHelper.height / ScreenHelper.width >= 1.6) {
+     MAX_ICONS_PER_PAGE += 4;
+   }
+ 
+@@ -168,6 +175,7 @@ var GridManager = (function() {
+         var prediction = Math.round(x1 + adjustment - startX);
+ 
+         // Make sure we don't return a prediction greater than the screen width
++        var windowWidth = ScreenHelper.width;
+         if (prediction >= windowWidth) {
+           prediction = windowWidth - 1;
+         }
+@@ -268,7 +276,7 @@ var GridManager = (function() {
+         var refresh;
+ 
+         var previous, next, pan;
+-
++        var windowWidthMinusOne = getWindowWidthMinusOne();
+         if (currentPage === 0) {
+           next = pages[currentPage + 1].container.style;
+           refresh = function(e) {
+@@ -466,6 +474,7 @@ var GridManager = (function() {
+ 
+     // We are going to prepare pages that are next to current page
+     // for panning.
++    var windowWidthMinusOne = getWindowWidthMinusOne();
+ 
+     if (index) {
+       var previous = pages[index - 1].container.style;
+@@ -522,6 +531,7 @@ var GridManager = (function() {
+ 
+     currentPage = index;
+     updatePaginationBar();
++    var windowWidthMinusOne = getWindowWidthMinusOne();
+ 
+     if (previousPage === newPage) {
+       if (newPage.container.getBoundingClientRect().left !== 0) {
+@@ -1391,7 +1401,7 @@ var GridManager = (function() {
+     initUI(options.gridSelector);
+ 
+     tapThreshold = options.tapThreshold;
+-    swipeThreshold = windowWidth * options.swipeThreshold;
++    swipeThreshold = ScreenHelper.width * options.swipeThreshold;
+     swipeFriction = options.swipeFriction || defaults.swipeFriction; // Not zero
+     kPageTransitionDuration = options.swipeTransitionDuration;
+ 
+diff --git a/apps/homescreen/js/screen_helper.js b/apps/homescreen/js/screen_helper.js
+new file mode 100644
+index 0000000..f36d3a9
+--- /dev/null
++++ b/apps/homescreen/js/screen_helper.js
+@@ -0,0 +1,47 @@
++
++'use strict';
++
++(function(exports) {
++
++  var width = window.innerWidth;
++  var height = window.innerHeight;
++
++  function setDimensionsInternal() {
++    width = window.innerWidth;
++    height = window.innerHeight;
++  }
++
++  function setDimensions() {
++    var isPortrait = '(orientation: portrait)';
++    if (window.matchMedia(isPortrait).matches) {
++      setDimensionsInternal();
++    } else {
++      window.matchMedia(isPortrait).addListener(function onOrientation(evt) {
++        if (evt.matches) {
++          window.matchMedia(isPortrait).removeListener(onOrientation);
++          setTimeout(setDimensionsInternal);
++        }
++      });
++    }
++  }
++
++  if (document.hidden) {
++    document.addEventListener('visibilitychange', function onVisible() {
++      document.removeEventListener('visibilitychange', onVisible);
++      setDimensions();
++    });
++  } else {
++    setDimensions();
++  }
++
++  exports.ScreenHelper = {
++    get width() {
++      return width;
++    },
++
++    get height() {
++      return height;
++    }
++  };
++
++}(window));
+diff --git a/apps/homescreen/test/unit/dock_test.js b/apps/homescreen/test/unit/dock_test.js
+index ae049a4..3655b59 100644
+--- a/apps/homescreen/test/unit/dock_test.js
++++ b/apps/homescreen/test/unit/dock_test.js
+@@ -6,6 +6,7 @@ requireApp('homescreen/test/unit/mock_page.js');
+ 
+ require('/shared/js/screen_layout.js');
+ requireApp('homescreen/js/dock.js');
++requireApp('homescreen/js/screen_helper.js');
+ 
+ var mocksHelper = new MocksHelper([
+   'Page',
+@@ -129,6 +130,8 @@ suite('dock.js >', function() {
+         new MockIcon(),
+         new MockIcon(),
+         new MockIcon(),
++        new MockIcon(),
++        new MockIcon(),
+         new MockIcon()
+       ];
+       dock = new MockDock(dockContainer);
+diff --git a/apps/homescreen/test/unit/grid_test.js b/apps/homescreen/test/unit/grid_test.js
+index 307543e..3068eb8 100644
+--- a/apps/homescreen/test/unit/grid_test.js
++++ b/apps/homescreen/test/unit/grid_test.js
+@@ -18,6 +18,7 @@ requireApp('homescreen/test/unit/mock_hidden_apps.js');
+ requireApp('homescreen/test/unit/mock_icon_retriever.js');
+ 
+ requireApp('homescreen/js/bookmarks_storage.js');
++requireApp('homescreen/js/screen_helper.js');
+ require('/shared/js/screen_layout.js');
+ requireApp('homescreen/js/icon_manager.js');
+ requireApp('homescreen/js/grid_components.js');
+-- 
+1.7.9.5
+
