@@ -1,0 +1,15 @@
+diff --git a/apps/system/js/homescreen_window.js b/apps/system/js/homescreen_window.js
+index ee11b4c..9faab3a 100644
+--- a/apps/system/js/homescreen_window.js
++++ b/apps/system/js/homescreen_window.js
+@@ -134,6 +134,10 @@
+       // we need this here and not in other situations
+       // as it is expected that homescreen frame is available.
+       setTimeout(function() {
++        if (this.element) {
++          console.log('bug#293965 occurs.');
++          return;
++        }
+         this.render();
+         this.open();
+       }.bind(this));
